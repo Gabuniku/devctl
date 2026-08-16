@@ -56,6 +56,19 @@ fn sorted_repo_lines(repos: Vec<(String, String)>) -> Vec<String> {
     lines
 }
 
+fn is_repo_root(path: &Path) -> bool {
+    if !is_git_worktree(path) {
+        return false;
+    }
+    let Ok(top) = git_toplevel(path) else {
+        return false;
+    };
+    let (Ok(path), Ok(top)) = (path.canonicalize(), top.canonicalize()) else {
+        return false;
+    };
+    path == top
+}
+
 pub fn cmd_list() -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
@@ -83,9 +96,7 @@ pub fn cmd_list() -> Result<()> {
             let entry =
                 entry.with_context(|| format!("failed to read {}", owner_path.display()))?;
             let path = entry.path();
-            // `is_git_worktree` is also true for directories inside a repository.
-            // A managed repository root itself always has a `.git` file or directory.
-            if path.join(".git").exists() && is_git_worktree(&path) {
+            if is_repo_root(&path) {
                 repos.push((
                     owner_name.clone(),
                     entry.file_name().to_string_lossy().into_owned(),
