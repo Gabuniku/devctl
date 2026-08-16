@@ -27,11 +27,12 @@ pub fn resolve_repo(ws: &Workspace, arg: Option<RepoId>, cwd: &Path) -> Result<(
             (id, path)
         }
         None => {
-            let top = git_toplevel(cwd)
-                .context("repository was not specified and the current directory is not in one")?;
+            let top = git_toplevel(cwd).context(
+                "repository was not specified and the current directory is not in one\nrun `devctl list` to see managed repositories",
+            )?;
             let id = repo_id_from_path(ws, &top).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "current repository {} is not managed by this devctl workspace",
+                    "current repository {} is not managed by this devctl workspace\nrun `devctl list` to see managed repositories",
                     top.display()
                 )
             })?;
@@ -44,6 +45,70 @@ pub fn resolve_repo(ws: &Workspace, arg: Option<RepoId>, cwd: &Path) -> Result<(
     }
 
     Ok((id, path))
+}
+
+fn sorted_repo_lines(repos: Vec<(String, String)>) -> Vec<String> {
+    let mut lines = repos
+        .into_iter()
+        .map(|(owner, name)| format!("{owner}/{name}"))
+        .collect::<Vec<_>>();
+    lines.sort();
+    lines
+}
+
+fn is_repo_root(path: &Path) -> bool {
+    if !is_git_worktree(path) {
+        return false;
+    }
+    let Ok(top) = git_toplevel(path) else {
+        return false;
+    };
+    let (Ok(path), Ok(top)) = (path.canonicalize(), top.canonicalize()) else {
+        return false;
+    };
+    path == top
+}
+
+pub fn cmd_list() -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let ws = load_workspace(&cwd)?;
+    let projects_root = ws.projects_root();
+    let owners = match fs::read_dir(&projects_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read {}", projects_root.display()))
+        }
+    };
+
+    let mut repos = Vec::new();
+    for owner in owners {
+        let owner = owner.with_context(|| format!("failed to read {}", projects_root.display()))?;
+        let owner_path = owner.path();
+        if !owner_path.is_dir() {
+            continue;
+        }
+        let owner_name = owner.file_name().to_string_lossy().into_owned();
+        let entries = fs::read_dir(&owner_path)
+            .with_context(|| format!("failed to read {}", owner_path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.with_context(|| format!("failed to read {}", owner_path.display()))?;
+            let path = entry.path();
+            if is_repo_root(&path) {
+                repos.push((
+                    owner_name.clone(),
+                    entry.file_name().to_string_lossy().into_owned(),
+                ));
+            }
+        }
+    }
+
+    for line in sorted_repo_lines(repos) {
+        println!("{line}");
+    }
+    Ok(())
 }
 
 pub fn resolve_or_clone(
@@ -227,6 +292,22 @@ mod tests {
             name: "foo".into(),
         };
         assert_eq!(zellij_session_name(&id), "dev-Gabuniku--foo");
+    }
+
+    #[test]
+    fn sorts_repo_lines() {
+        assert_eq!(
+            sorted_repo_lines(vec![
+                ("yattulab".into(), "qi-bot-rs".into()),
+                ("Gabuniku".into(), "foo".into()),
+            ]),
+            vec!["Gabuniku/foo", "yattulab/qi-bot-rs"]
+        );
+    }
+
+    #[test]
+    fn empty_repo_lines_stay_empty() {
+        assert!(sorted_repo_lines(Vec::new()).is_empty());
     }
 
     #[test]
