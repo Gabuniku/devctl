@@ -526,7 +526,7 @@ repository指定を省略して管理ルート等で実行した場合も、一�
 ```text
 $ cd ~/workspaces && devctl open
 Error: repository was not specified and the current directory is not in one
-       run `devctl list` to see managed repositories
+run `devctl list` to see managed repositories
 ```
 
 ## `devctl doctor`
