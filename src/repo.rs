@@ -5,7 +5,7 @@ use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
 
-use crate::command::{capture_stdout, run_checked};
+use crate::command::{capture_stdout, capture_stdout_quiet, run_checked};
 use crate::config::Workspace;
 
 #[derive(Clone, Debug)]
@@ -73,7 +73,7 @@ pub fn is_git_worktree(path: &Path) -> bool {
         OsString::from("rev-parse"),
         OsString::from("--is-inside-work-tree"),
     ];
-    capture_stdout("git", &args).is_ok_and(|output| output == "true")
+    capture_stdout_quiet("git", &args).is_ok_and(|output| output == "true")
 }
 
 pub fn git_toplevel(cwd: &Path) -> Result<PathBuf> {

@@ -24,10 +24,18 @@ pub fn run_checked(program: &str, args: &[OsString], ctx: &str) -> Result<()> {
 }
 
 pub fn capture_stdout(program: &str, args: &[OsString]) -> Result<String> {
+    capture_stdout_with_stderr(program, args, Stdio::inherit())
+}
+
+pub fn capture_stdout_quiet(program: &str, args: &[OsString]) -> Result<String> {
+    capture_stdout_with_stderr(program, args, Stdio::null())
+}
+
+fn capture_stdout_with_stderr(program: &str, args: &[OsString], stderr: Stdio) -> Result<String> {
     let output = Command::new(program)
         .args(args)
         .stdin(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stderr(stderr)
         .output()
         .with_context(|| format!("failed to run {program}"))?;
     if !output.status.success() {
