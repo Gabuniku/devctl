@@ -553,6 +553,19 @@ capture_stdout(...)
 
 程度で十分。
 
+### stderrの扱い
+
+外部コマンドのstderrを抑制するかは、**失敗が正常系かどうか**で決める。両者を揃えてはいけない。
+
+* 失敗が正常系の判定 (`is_git_worktree`、doctorの各検査) は stderr を捨てる。
+  未cloneのrepositoryを指定するたびに `fatal: cannot change to ...` が出るのは純粋なノイズで、
+  devctl自身のエラーより先に表示されて原因を誤認させる。
+* 成功を期待する操作 (`git_toplevel`) は stderr を通す。
+  権限エラーやrepository破損の理由はgitのstderrにしか出ず、抑制すると
+  `git failed: exit status: 128` しか残らず診断できなくなる。
+
+`capture_stdout` (継承) と `capture_stdout_quiet` (破棄) を用意し、呼び出し側で選ぶ。
+
 純粋なpath・parse・text編集logicはunit test可能な形へ分離する。
 
 external CLI自体を大量にmockする仕組みはMVPでは不要。
