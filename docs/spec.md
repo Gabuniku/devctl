@@ -250,6 +250,7 @@ devctl up    [owner/repo]
 devctl shell [owner/repo]
 devctl exec  [owner/repo] -- <command...>
 
+devctl list
 devctl doctor
 ```
 
@@ -490,6 +491,43 @@ devcontainer up --workspace-folder <repo>
 `.devcontainer/devcontainer.json` 等をdevctlが詳細にparseする必要はない。
 
 ただしerror messageには、どのrepositoryに対する `devcontainer up` が失敗したか分かるcontextを付ける。
+
+## `devctl list`
+
+管理下のrepositoryを一覧する。
+
+```text
+$ devctl list
+Gabuniku/foo
+yattulab/qi-bot-rs
+```
+
+* `<root>/<projects_dir>` を2階層読み、`owner/repo` 形式で1行ずつ出力する
+* そのまま `devctl open` へ貼れる形式にする（pathではなく `RepoId` の表記）
+* Git repositoryとして有効なものだけを出す。判定は `is_git_worktree` を使う
+  （clone途中で壊れた残骸やゴミdirectoryを除外するため）
+* 出力順は安定させる（sort）
+* 管理下に何も無ければ何も出力せず正常終了する
+
+管理ルート検出を使うので、repositoryの中からでも実行できる。
+`ls` と違い実行場所に依存しない点が、このcommandを持つ理由である。
+
+Dev Containerの起動状態やgitのdirty状態は表示しない。
+Dockerやgitへの問い合わせが増えて薄さが失われるため、MVPでは対象外とする。
+
+### `open` / `up` は一覧を表示しない
+
+repository指定を省略して管理ルート等で実行した場合も、一覧表示へfallbackしない。
+`open` は副作用の大きいcommandであり、current directoryによって
+「sessionを開く」と「一覧を出す」に分岐するのは危険だからである。
+
+代わりにerror messageから `devctl list` へ誘導する。
+
+```text
+$ cd ~/workspaces && devctl open
+Error: repository was not specified and the current directory is not in one
+       run `devctl list` to see managed repositories
+```
 
 ## `devctl doctor`
 
