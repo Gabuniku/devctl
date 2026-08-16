@@ -23,7 +23,7 @@ pub enum Commands {
     /// Execute a command in a repository's Dev Container
     Exec {
         repo: Option<RepoId>,
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
     /// Check required tools and workspace configuration
