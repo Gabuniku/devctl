@@ -138,11 +138,8 @@ mod tests {
 
     #[test]
     fn resolves_repo_id_from_managed_path() {
-        let id = repo_id_from_path(
-            &workspace(),
-            Path::new("/workspace/projects/Gabuniku/foo"),
-        )
-        .unwrap();
+        let id =
+            repo_id_from_path(&workspace(), Path::new("/workspace/projects/Gabuniku/foo")).unwrap();
         assert_eq!(id.to_string(), "Gabuniku/foo");
     }
 
