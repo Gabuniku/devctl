@@ -18,11 +18,7 @@ const CLAUDE_LOCAL: &str = "<!-- Managed by devctl. Manual changes may be overwr
 - Use `devctl exec -- <command>`.\n\
 - Do not install project dependencies directly on the host VM.\n";
 
-pub fn resolve_repo(
-    ws: &Workspace,
-    arg: Option<RepoId>,
-    cwd: &Path,
-) -> Result<(RepoId, PathBuf)> {
+pub fn resolve_repo(ws: &Workspace, arg: Option<RepoId>, cwd: &Path) -> Result<(RepoId, PathBuf)> {
     let (id, path) = match arg {
         Some(id) => {
             let path = repo_path(ws, &id);
@@ -121,8 +117,7 @@ pub fn ensure_git_exclude(repo_path: &Path) -> Result<()> {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        fs::write(&path, updated)
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        fs::write(&path, updated).with_context(|| format!("failed to write {}", path.display()))?;
     }
     Ok(())
 }
@@ -208,7 +203,12 @@ where
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-        .with_context(|| format!("failed to run devcontainer exec for {}", repo_path.display()))
+        .with_context(|| {
+            format!(
+                "failed to run devcontainer exec for {}",
+                repo_path.display()
+            )
+        })
 }
 
 #[cfg(test)]
