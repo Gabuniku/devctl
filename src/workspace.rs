@@ -15,8 +15,10 @@ const CLAUDE_LOCAL: &str = "<!-- Managed by devctl. Manual changes may be overwr
 \n\
 - Source files are stored on the development VM.\n\
 - Project runtime commands must run inside the Dev Container.\n\
-- Use `devctl exec -- <command>`.\n\
-- Do not install project dependencies directly on the host VM.\n";
+- Use `devctl exec -- <command>`, e.g. `devctl exec -- cargo test`.\n\
+- If the Dev Container is not running, start it with `devctl up`.\n\
+- Do not install project dependencies directly on the host VM.\n\
+- Do not run `devctl open`: it attaches an interactive Zellij session and will not return.\n";
 
 pub fn resolve_repo(ws: &Workspace, arg: Option<RepoId>, cwd: &Path) -> Result<(RepoId, PathBuf)> {
     let (id, path) = match arg {
@@ -184,6 +186,9 @@ pub fn cmd_shell(arg: Option<RepoId>) -> Result<()> {
 }
 
 pub fn cmd_exec(arg: Option<RepoId>, argv: Vec<String>) -> Result<ExitStatus> {
+    if argv.is_empty() {
+        bail!("no command specified for devctl exec");
+    }
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (_, path) = resolve_repo(&ws, arg, &cwd)?;
@@ -228,7 +233,7 @@ mod tests {
     fn claude_local_matches_specification() {
         assert_eq!(
             claude_local_contents(),
-            "<!-- Managed by devctl. Manual changes may be overwritten. -->\n\n# Local development environment\n\n- Source files are stored on the development VM.\n- Project runtime commands must run inside the Dev Container.\n- Use `devctl exec -- <command>`.\n- Do not install project dependencies directly on the host VM.\n"
+            "<!-- Managed by devctl. Manual changes may be overwritten. -->\n\n# Local development environment\n\n- Source files are stored on the development VM.\n- Project runtime commands must run inside the Dev Container.\n- Use `devctl exec -- <command>`, e.g. `devctl exec -- cargo test`.\n- If the Dev Container is not running, start it with `devctl up`.\n- Do not install project dependencies directly on the host VM.\n- Do not run `devctl open`: it attaches an interactive Zellij session and will not return.\n"
         );
     }
 
@@ -238,6 +243,12 @@ mod tests {
             exclude_with_entry("target/\n", "CLAUDE.local.md"),
             Some("target/\nCLAUDE.local.md\n".into())
         );
+    }
+
+    #[test]
+    fn exec_requires_a_command() {
+        let error = cmd_exec(None, Vec::new()).unwrap_err();
+        assert_eq!(error.to_string(), "no command specified for devctl exec");
     }
 
     #[test]

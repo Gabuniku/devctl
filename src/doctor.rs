@@ -2,7 +2,7 @@ use std::ffi::OsString;
 
 use anyhow::{bail, Result};
 
-use crate::command::capture_stdout;
+use crate::command::{capture_stdout, capture_stdout_quiet};
 
 const COMMANDS: [&str; 5] = ["git", "gh", "docker", "devcontainer", "zellij"];
 
@@ -27,7 +27,7 @@ pub fn cmd_doctor() -> Result<()> {
     println!();
     failed |= !print_check(
         "GitHub auth",
-        capture_stdout(
+        capture_stdout_quiet(
             "gh",
             &[
                 OsString::from("auth"),
@@ -39,7 +39,7 @@ pub fn cmd_doctor() -> Result<()> {
     );
     failed |= !print_check(
         "Docker daemon",
-        capture_stdout("docker", &[OsString::from("info")]).is_ok(),
+        capture_stdout_quiet("docker", &[OsString::from("info")]).is_ok(),
     );
 
     if failed {
