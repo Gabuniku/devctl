@@ -14,6 +14,8 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize a workspace in the current directory
     Init,
+    /// List managed repositories
+    List,
     /// Open a repository development environment
     Open { repo: Option<RepoId> },
     /// Start a repository's Dev Container
