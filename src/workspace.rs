@@ -13,7 +13,7 @@ const CLAUDE_LOCAL: &str = "<!-- Managed by devctl. Manual changes may be overwr
 \n\
 # Local development environment\n\
 \n\
-- Source files are stored on the development VM.\n\
+- Source files are stored on the development VM. Edit them here.\n\
 - Project runtime commands must run inside the Dev Container.\n\
 - Use `devctl exec -- <command>`, e.g. `devctl exec -- cargo test`.\n\
 - If the Dev Container is not running, start it with `devctl up`.\n\
@@ -233,7 +233,7 @@ mod tests {
     fn claude_local_matches_specification() {
         assert_eq!(
             claude_local_contents(),
-            "<!-- Managed by devctl. Manual changes may be overwritten. -->\n\n# Local development environment\n\n- Source files are stored on the development VM.\n- Project runtime commands must run inside the Dev Container.\n- Use `devctl exec -- <command>`, e.g. `devctl exec -- cargo test`.\n- If the Dev Container is not running, start it with `devctl up`.\n- Do not install project dependencies directly on the host VM.\n- Do not run `devctl open`: it attaches an interactive Zellij session and will not return.\n"
+            "<!-- Managed by devctl. Manual changes may be overwritten. -->\n\n# Local development environment\n\n- Source files are stored on the development VM. Edit them here.\n- Project runtime commands must run inside the Dev Container.\n- Use `devctl exec -- <command>`, e.g. `devctl exec -- cargo test`.\n- If the Dev Container is not running, start it with `devctl up`.\n- Do not install project dependencies directly on the host VM.\n- Do not run `devctl open`: it attaches an interactive Zellij session and will not return.\n"
         );
     }
 
