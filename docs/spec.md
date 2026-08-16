@@ -433,11 +433,18 @@ repository rootに `CLAUDE.local.md` を配置する。
 
 # Local development environment
 
-- Source files are stored on the development VM.
+- Source files are stored on the development VM. Edit them here.
 - Project runtime commands must run inside the Dev Container.
-- Use `devctl exec -- <command>`.
+- Use `devctl exec -- <command>`, e.g. `devctl exec -- cargo test`.
+- If the Dev Container is not running, start it with `devctl up`.
 - Do not install project dependencies directly on the host VM.
+- Do not run `devctl open`: it attaches an interactive Zellij session and will not return.
 ```
+
+このファイルの読み手はそのrepositoryで動くcoding agent自身である。
+「知らないと行動を間違える」情報だけを載せ、agentの行動を変えない情報
+（`devctl init` / `devctl doctor` / `devctl shell` の説明、devctl自体の紹介）は
+載せない。全repositoryの毎session で消費されるcontextだからである。
 
 MVPではmerge機構を作らない。
 
