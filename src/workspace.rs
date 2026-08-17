@@ -140,66 +140,15 @@ pub fn cmd_list(include_user: bool) -> Result<()> {
     Ok(())
 }
 
-fn json_string_value<'a>(object: &'a str, key: &str) -> Option<&'a str> {
-    let key = format!("\"{key}\"");
-    let start = object.find(&key)? + key.len();
-    let value = object[start..].trim_start().strip_prefix(':')?.trim_start();
-    let value = value.strip_prefix('"')?;
-    let end = value
-        .char_indices()
-        .find(|(index, character)| {
-            *character == '"'
-                && value[..*index]
-                    .chars()
-                    .rev()
-                    .take_while(|c| *c == '\\')
-                    .count()
-                    % 2
-                    == 0
-        })?
-        .0;
-    Some(&value[..end])
-}
-
-fn json_object_value<'a>(object: &'a str, key: &str) -> Option<&'a str> {
-    let key = format!("\"{key}\"");
-    let start = object.find(&key)? + key.len();
-    let value = object[start..].trim_start().strip_prefix(':')?.trim_start();
-    let start = value.find('{')?;
-    let mut depth = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (index, character) in value[start..].char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if character == '\\' {
-                escaped = true;
-            } else if character == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match character {
-            '"' => in_string = true,
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(&value[start..=start + index]);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 fn remote_user_from_json_lines(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        let merged = json_object_value(line, "mergedConfiguration")?;
-        json_string_value(merged, "remoteUser").map(str::to_owned)
-    })
+    output
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|value| {
+            value["mergedConfiguration"]["remoteUser"]
+                .as_str()
+                .map(str::to_owned)
+        })
 }
 
 fn devcontainer_remote_user(id: &RepoId, repo_path: &Path) -> Result<String> {
