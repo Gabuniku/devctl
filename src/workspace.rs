@@ -205,10 +205,23 @@ pub fn zellij_session_name(id: &RepoId) -> String {
     format!("dev-{}--{}", id.owner, id.name)
 }
 
+fn should_attach(current_session: Option<&str>, target: &str) -> bool {
+    current_session != Some(target)
+}
+
 pub fn attach_zellij(id: &RepoId) -> Result<()> {
+    let target = zellij_session_name(id);
+    if !should_attach(
+        std::env::var("ZELLIJ_SESSION_NAME").ok().as_deref(),
+        &target,
+    ) {
+        println!("already attached to zellij session {target}; skipping attach");
+        return Ok(());
+    }
+
     let status = Command::new("zellij")
         .args(["attach", "-c"])
-        .arg(zellij_session_name(id))
+        .arg(target)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -292,6 +305,27 @@ mod tests {
             name: "foo".into(),
         };
         assert_eq!(zellij_session_name(&id), "dev-Gabuniku--foo");
+    }
+
+    #[test]
+    fn does_not_attach_to_current_zellij_session() {
+        assert!(!should_attach(
+            Some("dev-Gabuniku--foo"),
+            "dev-Gabuniku--foo"
+        ));
+    }
+
+    #[test]
+    fn attaches_to_a_different_zellij_session() {
+        assert!(should_attach(
+            Some("dev-Gabuniku--bar"),
+            "dev-Gabuniku--foo"
+        ));
+    }
+
+    #[test]
+    fn attaches_from_outside_zellij() {
+        assert!(should_attach(None, "dev-Gabuniku--foo"));
     }
 
     #[test]
