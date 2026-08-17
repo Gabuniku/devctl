@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
@@ -5,7 +6,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-use crate::config::{load_workspace, Workspace};
+use crate::config::{load_workspace, Config, Mount, Workspace};
 use crate::repo::{
     clone_repo, git_toplevel, is_git_worktree, repo_id_from_path, repo_path, RepoId,
 };
@@ -267,10 +268,59 @@ pub fn ensure_git_exclude(repo_path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn devcontainer_up(id: &RepoId, repo_path: &Path) -> Result<()> {
+fn mount_spec(mount: &Mount, home: Option<&Path>) -> Result<String> {
+    let source = if mount.source == "~" {
+        home.context("HOME is not set; cannot expand mount source ~")?
+            .to_path_buf()
+    } else if let Some(relative) = mount.source.strip_prefix("~/") {
+        home.context("HOME is not set; cannot expand mount source starting with ~/")?
+            .join(relative)
+    } else {
+        PathBuf::from(&mount.source)
+    };
+    let source = if source.is_absolute() {
+        source
+    } else {
+        std::env::current_dir()
+            .context("failed to resolve mount source")?
+            .join(source)
+    };
+    Ok(format!(
+        "type=bind,source={},target={}",
+        source.display(),
+        mount.target
+    ))
+}
+
+fn devcontainer_up_args(
+    config: &Config,
+    repo_path: &Path,
+    home: Option<&Path>,
+) -> Result<Vec<OsString>> {
+    let mut args = vec![
+        OsString::from("up"),
+        OsString::from("--workspace-folder"),
+        repo_path.as_os_str().to_owned(),
+    ];
+    if !config.personal_features.is_empty() {
+        args.push(OsString::from("--additional-features"));
+        args.push(serde_json::to_string(&config.personal_features)?.into());
+    }
+    for mount in &config.mounts {
+        args.push(OsString::from("--mount"));
+        args.push(mount_spec(mount, home)?.into());
+    }
+    Ok(args)
+}
+
+pub fn devcontainer_up(id: &RepoId, repo_path: &Path, config: &Config) -> Result<()> {
+    let args = devcontainer_up_args(
+        config,
+        repo_path,
+        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+    )?;
     let status = Command::new("devcontainer")
-        .args(["up", "--workspace-folder"])
-        .arg(repo_path)
+        .args(args)
         .status()
         .with_context(|| format!("failed to run devcontainer up for {id}"))?;
     if !status.success() {
@@ -317,7 +367,7 @@ pub fn cmd_open(arg: Option<RepoId>) -> Result<()> {
     let (id, path) = resolve_or_clone(&ws, arg, &cwd)?;
     ensure_claude_local(&path)?;
     ensure_git_exclude(&path)?;
-    devcontainer_up(&id, &path)?;
+    devcontainer_up(&id, &path, &ws.config)?;
     attach_zellij(&id)
 }
 
@@ -327,7 +377,7 @@ pub fn cmd_up(arg: Option<RepoId>) -> Result<()> {
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
     ensure_claude_local(&path)?;
     ensure_git_exclude(&path)?;
-    devcontainer_up(&id, &path)
+    devcontainer_up(&id, &path, &ws.config)
 }
 
 pub fn cmd_shell(arg: Option<RepoId>) -> Result<()> {
@@ -375,6 +425,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn config(contents: &str) -> Config {
+        toml::from_str(&format!("projects_dir = \"projects\"\n{contents}")).unwrap()
+    }
 
     #[test]
     fn builds_zellij_session_name() {
@@ -457,6 +511,62 @@ mod tests {
             remote_user_from_json_lines(output).as_deref(),
             Some("vscode")
         );
+    }
+
+    #[test]
+    fn adds_personal_features_as_json() {
+        let config = config(
+            r#"
+[personal_features]
+"ghcr.io/devcontainers/features/sshd:1" = { version = "latest" }
+"#,
+        );
+        let args =
+            devcontainer_up_args(&config, Path::new("/repo"), Some(Path::new("/home/me"))).unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--additional-features",
+                r#"{"ghcr.io/devcontainers/features/sshd:1":{"version":"latest"}}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn adds_mounts_with_expanded_absolute_sources() {
+        let config = config(
+            r#"
+[[mounts]]
+source = "~/.ssh/devcontainer_authorized_keys"
+target = "/home/vscode/.ssh/authorized_keys"
+"#,
+        );
+        let args =
+            devcontainer_up_args(&config, Path::new("/repo"), Some(Path::new("/home/me"))).unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--mount",
+                "type=bind,source=/home/me/.ssh/devcontainer_authorized_keys,target=/home/vscode/.ssh/authorized_keys",
+            ]
+        );
+    }
+
+    #[test]
+    fn omits_personal_feature_and_mount_flags_when_empty() {
+        let args =
+            devcontainer_up_args(&config(""), Path::new("/repo"), Some(Path::new("/home/me")))
+                .unwrap();
+
+        assert_eq!(args, vec!["up", "--workspace-folder", "/repo"]);
     }
 
     #[test]

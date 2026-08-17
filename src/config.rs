@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,6 +11,16 @@ const CONFIG_FILE: &str = "devctl.toml";
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub projects_dir: String,
+    #[serde(default)]
+    pub personal_features: BTreeMap<String, toml::Table>,
+    #[serde(default)]
+    pub mounts: Vec<Mount>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Mount {
+    pub source: String,
+    pub target: String,
 }
 
 #[derive(Debug)]

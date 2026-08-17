@@ -108,6 +108,8 @@ mod tests {
             root: PathBuf::from("/workspace"),
             config: Config {
                 projects_dir: "projects".to_owned(),
+                personal_features: Default::default(),
+                mounts: Vec::new(),
             },
         }
     }
