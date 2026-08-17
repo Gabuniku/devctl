@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use anyhow::{bail, Context, Result};
+use serde::Deserialize;
 
 use crate::config::{load_workspace, Workspace};
 use crate::repo::{
@@ -140,15 +141,23 @@ pub fn cmd_list(include_user: bool) -> Result<()> {
     Ok(())
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadConfiguration {
+    merged_configuration: MergedConfiguration,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MergedConfiguration {
+    remote_user: Option<String>,
+}
+
 fn remote_user_from_json_lines(output: &str) -> Option<String> {
     output
         .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find_map(|value| {
-            value["mergedConfiguration"]["remoteUser"]
-                .as_str()
-                .map(str::to_owned)
-        })
+        .filter_map(|line| serde_json::from_str::<ReadConfiguration>(line).ok())
+        .find_map(|configuration| configuration.merged_configuration.remote_user)
 }
 
 fn devcontainer_remote_user(id: &RepoId, repo_path: &Path) -> Result<String> {
