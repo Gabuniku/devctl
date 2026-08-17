@@ -15,7 +15,11 @@ pub enum Commands {
     /// Initialize a workspace in the current directory
     Init,
     /// List managed repositories
-    List,
+    List {
+        /// Include each Dev Container's remote user
+        #[arg(long)]
+        user: bool,
+    },
     /// Open a repository development environment
     Open { repo: Option<RepoId> },
     /// Start a repository's Dev Container
@@ -28,6 +32,8 @@ pub enum Commands {
         #[arg(last = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Print the SSH target for a repository's Dev Container
+    SshTarget { repo: Option<RepoId> },
     /// Check required tools and workspace configuration
     Doctor,
 }
