@@ -251,6 +251,8 @@ devctl shell [owner/repo]
 devctl exec  [owner/repo] -- <command...>
 
 devctl list
+devctl ssh-proxy <devctl-owner--repo>
+devctl ssh-target [owner/repo]
 devctl doctor
 ```
 
@@ -528,6 +530,127 @@ $ cd ~/workspaces && devctl open
 Error: repository was not specified and the current directory is not in one
 run `devctl list` to see managed repositories
 ```
+
+## 外部editorからDev Containerへ接続する
+
+PC上のeditor (Zed等) からDev Container内へSSHで入り、LSPをコンテナ側で動かすための支援。
+ホストVMに言語ごとのtoolchainを入れずに済ませることが目的である。
+
+```text
+PC (editor) --ssh--> devbox --docker exec--> container内 sshd --> editorのremote server
+                                                                  └─ LSPはここで動く
+```
+
+PC側の設定は以下1つだけで、repositoryが増えても変更不要にする。
+
+```text
+Host devctl-*
+  ProxyCommand ssh devbox devctl ssh-proxy %h
+```
+
+接続は `<user>@devctl-<owner>--<repo>`。
+`User` をSSH configに書かないのは、repositoryごとにcontainerのuser名が変わるためである。
+
+### `devctl ssh-proxy <devctl-owner--repo>`
+
+`ProxyCommand` から呼ばれ、stdioをcontainer内のsshdへ中継する。
+
+```text
+名前をowner/repoへ分解 → repository path算出 → containerを特定 → sshd -i をexec
+```
+
+* containerの特定は `docker ps -q --filter label=devcontainer.local_folder=<abs-repo-path>`
+* `exec docker exec -i <cid> /usr/sbin/sshd -i` で中継する。portは公開しない
+* **containerを起動しない。** 未起動なら「`devctl up` を先に実行せよ」というerrorで止める。
+  `ProxyCommand` はSSHのhandshake中に走るため、ここで `devcontainer up` を始めると
+  timeoutして原因も分からなくなる
+
+portを使わないため、環境が増えても割り当て管理が不要で、複数environmentへの同時接続が成立する。
+
+#### 実装上の落とし穴
+
+いずれも実測で確認済み。
+
+1. **`ProxyCommand` の中で `docker exec -i` を2回使ってはいけない。**
+   stdinはSSHクライアントのデータ本体であり、事前checkの `-i` が数byte消費すると
+   `message authentication code incorrect` になる。checkするなら `-i` を付けず
+   stdinを `/dev/null` から与える
+2. **`devcontainer up --mount` は `readonly` を受け付けない。**
+   しかもparse失敗時にhelpを出して **exit code 0** で終わるため、
+   終了statusだけでは失敗を検知できない
+3. **単一fileのbind mountはinodeに張り付く。**
+   `mv` や `sed -i` (既定はwrite+rename) でsourceを置き換えると、container側は
+   古いinodeを見続ける。SSH鍵をrevokeしたつもりが効かない状態になり、
+   container再作成以外に復旧手段がない。追記 (`>>`) はinodeを保つので安全
+4. **devbox自身の `~/.ssh/authorized_keys` をmountしてはいけない。**
+   readonlyが使えないためread-write mountになり、container内から鍵を追記して
+   devboxアカウントへのSSH権限を奪える。専用fileに分離する
+
+### `devctl ssh-target [owner/repo]`
+
+editorへ貼り付けられる形でSSH接続先を出力する。
+
+```text
+$ devctl ssh-target mizlinx/gyotaku-rockchip
+vscode@devctl-mizlinx--gyotaku-rockchip
+```
+
+user名の解決は以下を使う。
+
+```bash
+devcontainer read-configuration --workspace-folder <repo> --include-merged-configuration
+```
+
+`mergedConfiguration.remoteUser` を読む。`devcontainer.json` に `remoteUser` が
+書かれていない場合もimageのmetadataから解決されるため、fallbackは不要である。
+container起動も不要で、0.3秒程度で返る。
+
+`docker inspect` の `.Config.User` は使えない。devcontainerはcontainer自体をrootで動かし、
+`remoteUser` はexec時に適用する設計のため `root` が返る。
+
+### `devctl list --user`
+
+一覧にuser名の列を加える。
+
+```text
+$ devctl list --user
+mizlinx/gyotaku-rockchip   vscode
+yattulab/qi-bot-rs         vscode
+```
+
+**既定では出力しない。** `list` はfilesystemとGitだけで完結する軽いcommandであり、
+user名を出すとrepositoryごとに `devcontainer read-configuration` を呼ぶため
+repository数に比例して遅くなる。opt-inのflagに留める。
+
+### `devctl.toml` からの素通し設定
+
+個人環境依存の設定を `devctl.toml` に置き、`devcontainer` へそのまま渡す。
+共有される `devcontainer.json` を書き換えない点が要点である。
+
+```toml
+[personal_features]
+"ghcr.io/devcontainers/features/sshd:1" = {}
+
+[[mounts]]
+source = "~/.ssh/devcontainer_authorized_keys"
+target = "/home/vscode/.ssh/authorized_keys"
+```
+
+`--additional-features <JSON>` と `--mount <spec>` へ変換して渡すだけとする。
+どちらも素通しのflagであり、devctlがdevcontainer設定を解析する必要はない。
+`CLAUDE.local.md` と同じ「個人環境の情報はdevctlが持ち、共有fileは汚さない」方針の延長である。
+
+### 実装しないこと
+
+以下に手を出すとworkspace platformの再実装になる。境界として明記する。
+
+* SSH鍵の生成・配布 (bind mountでホスト側のfileを参照させるに留める)
+* sshdのlifecycle管理
+* portの割り当て
+* 接続registryの保持
+* リモートマシンへのtunneling
+
+これらが必要になった時点で、devctlではなくCoder等を使うべきである。
 
 ## `devctl doctor`
 
