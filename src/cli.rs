@@ -30,4 +30,6 @@ pub enum Commands {
     },
     /// Check required tools and workspace configuration
     Doctor,
+    /// Proxy SSH traffic to a repository's Dev Container
+    SshProxy { name: String },
 }

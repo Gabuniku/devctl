@@ -3,6 +3,7 @@ pub mod command;
 pub mod config;
 pub mod doctor;
 pub mod repo;
+pub mod ssh;
 pub mod workspace;
 
 use anyhow::Result;
@@ -21,5 +22,6 @@ fn main() -> Result<()> {
             std::process::exit(status.code().unwrap_or(1));
         }
         Commands::Doctor => doctor::cmd_doctor(),
+        Commands::SshProxy { name } => ssh::cmd_ssh_proxy(&name),
     }
 }
