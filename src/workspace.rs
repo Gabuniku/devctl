@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use anyhow::{bail, Context, Result};
+use serde::Deserialize;
 
 use crate::config::{load_workspace, Workspace};
 use crate::repo::{
@@ -56,6 +57,15 @@ fn sorted_repo_lines(repos: Vec<(String, String)>) -> Vec<String> {
     lines
 }
 
+fn sorted_repo_user_lines(mut repos: Vec<(String, String)>) -> Vec<String> {
+    repos.sort_by(|left, right| left.0.cmp(&right.0));
+    let width = repos.iter().map(|(repo, _)| repo.len()).max().unwrap_or(0);
+    repos
+        .into_iter()
+        .map(|(repo, user)| format!("{repo:<width$}   {user}"))
+        .collect()
+}
+
 fn is_repo_root(path: &Path) -> bool {
     if !is_git_worktree(path) {
         return false;
@@ -69,7 +79,7 @@ fn is_repo_root(path: &Path) -> bool {
     path == top
 }
 
-pub fn cmd_list() -> Result<()> {
+pub fn cmd_list(include_user: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let projects_root = ws.projects_root();
@@ -98,16 +108,84 @@ pub fn cmd_list() -> Result<()> {
             let path = entry.path();
             if is_repo_root(&path) {
                 repos.push((
-                    owner_name.clone(),
-                    entry.file_name().to_string_lossy().into_owned(),
+                    RepoId {
+                        owner: owner_name.clone(),
+                        name: entry.file_name().to_string_lossy().into_owned(),
+                    },
+                    path,
                 ));
             }
         }
     }
 
-    for line in sorted_repo_lines(repos) {
+    let lines = if include_user {
+        let repos = repos
+            .into_iter()
+            .map(|(id, path)| {
+                let user = devcontainer_remote_user(&id, &path)?;
+                Ok((id.to_string(), user))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        sorted_repo_user_lines(repos)
+    } else {
+        sorted_repo_lines(
+            repos
+                .into_iter()
+                .map(|(id, _)| (id.owner, id.name))
+                .collect(),
+        )
+    };
+    for line in lines {
         println!("{line}");
     }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadConfiguration {
+    merged_configuration: MergedConfiguration,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MergedConfiguration {
+    remote_user: Option<String>,
+}
+
+fn remote_user_from_json_lines(output: &str) -> Option<String> {
+    output
+        .lines()
+        .filter_map(|line| serde_json::from_str::<ReadConfiguration>(line).ok())
+        .find_map(|configuration| configuration.merged_configuration.remote_user)
+}
+
+fn devcontainer_remote_user(id: &RepoId, repo_path: &Path) -> Result<String> {
+    let output = Command::new("devcontainer")
+        .args(["read-configuration", "--workspace-folder"])
+        .arg(repo_path)
+        .arg("--include-merged-configuration")
+        .output()
+        .with_context(|| format!("failed to read Dev Container configuration for {id}"))?;
+    if !output.status.success() {
+        bail!("failed to resolve remote user for repository {id}");
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .with_context(|| format!("Dev Container configuration for {id} was not UTF-8"))?;
+    remote_user_from_json_lines(&stdout)
+        .ok_or_else(|| anyhow::anyhow!("remote user is not configured for repository {id}"))
+}
+
+pub fn ssh_target(id: &RepoId, user: &str) -> String {
+    format!("{user}@devctl-{}--{}", id.owner, id.name)
+}
+
+pub fn cmd_ssh_target(arg: Option<RepoId>) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let ws = load_workspace(&cwd)?;
+    let (id, path) = resolve_repo(&ws, arg, &cwd)?;
+    let user = devcontainer_remote_user(&id, &path)?;
+    println!("{}", ssh_target(&id, &user));
     Ok(())
 }
 
@@ -342,6 +420,43 @@ mod tests {
     #[test]
     fn empty_repo_lines_stay_empty() {
         assert!(sorted_repo_lines(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn builds_ssh_target() {
+        let id = RepoId {
+            owner: "mizlinx".into(),
+            name: "gyotaku-rockchip".into(),
+        };
+        assert_eq!(
+            ssh_target(&id, "vscode"),
+            "vscode@devctl-mizlinx--gyotaku-rockchip"
+        );
+    }
+
+    #[test]
+    fn sorts_and_aligns_repo_user_lines() {
+        assert_eq!(
+            sorted_repo_user_lines(vec![
+                ("yattulab/qi-bot-rs".into(), "vscode".into()),
+                ("mizlinx/gyotaku-rockchip".into(), "vscode".into()),
+            ]),
+            vec![
+                "mizlinx/gyotaku-rockchip   vscode",
+                "yattulab/qi-bot-rs         vscode",
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_remote_user_from_merged_configuration() {
+        let output = r#"log line
+{"configuration":{"remoteUser":"wrong"},"mergedConfiguration":{"name":"test","remoteUser":"vscode"}}
+"#;
+        assert_eq!(
+            remote_user_from_json_lines(output).as_deref(),
+            Some("vscode")
+        );
     }
 
     #[test]
