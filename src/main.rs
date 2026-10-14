@@ -1,3 +1,4 @@
+pub mod agents;
 mod cli;
 pub mod command;
 pub mod config;
@@ -8,7 +9,7 @@ pub mod workspace;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use cli::{AgentsCommand, Cli, Commands};
 
 fn main() -> Result<()> {
     match Cli::parse().command {
@@ -25,5 +26,8 @@ fn main() -> Result<()> {
         Commands::SshTarget { repo } => workspace::cmd_ssh_target(repo),
         Commands::Doctor => doctor::cmd_doctor(),
         Commands::SshProxy { name } => ssh::cmd_ssh_proxy(&name),
+        Commands::Agents { command } => match command {
+            AgentsCommand::Install { print } => agents::cmd_install(print),
+        },
     }
 }
