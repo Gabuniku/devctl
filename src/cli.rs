@@ -19,6 +19,7 @@ pub enum Commands {
         /// Include each Dev Container's remote user
         #[arg(long)]
         user: bool,
+        /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
     },
@@ -39,11 +40,13 @@ pub enum Commands {
     /// Print the SSH target for a repository's Dev Container
     SshTarget {
         repo: Option<RepoId>,
+        /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
     },
     /// Check required tools and workspace configuration
     Doctor {
+        /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
     },
@@ -52,6 +55,7 @@ pub enum Commands {
     /// Print repository context for tools and automation
     Context {
         repo: Option<RepoId>,
+        /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
     },
