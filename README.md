@@ -72,12 +72,13 @@ devctl shell                     # コンテナ内 bash
 | `devctl init` | 管理ルートを初期化する |
 | `devctl list` | 管理下の repository を一覧する |
 | `devctl open [owner/repo]` | 必要なら clone し、コンテナ起動後 Zellij に接続する |
+| `devctl ensure [owner/repo]` | 必要なら clone し、Dev Container を起動して終了する |
 | `devctl up [owner/repo]` | Dev Container を起動する |
 | `devctl exec [owner/repo] -- <cmd>` | コンテナ内でコマンドを実行する |
 | `devctl shell [owner/repo]` | コンテナ内で bash を起動する |
 | `devctl doctor` | 外部コマンド・GitHub 認証・Docker 接続を診断する |
 
-clone するのは `open` だけ。`up` / `exec` / `shell` は暗黙に repository を作らない。
+clone するのは `open` / `ensure` だけ。`up` / `exec` / `shell` は暗黙に repository を作らない。
 
 `exec` は `--` 以降をそのまま子プロセスへ渡し、終了コードもそのまま返す。
 

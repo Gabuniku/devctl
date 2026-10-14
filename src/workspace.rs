@@ -361,14 +361,23 @@ pub fn attach_zellij(id: &RepoId) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_open(arg: Option<RepoId>) -> Result<()> {
+fn prepare_repository(arg: Option<RepoId>) -> Result<RepoId> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (id, path) = resolve_or_clone(&ws, arg, &cwd)?;
     ensure_claude_local(&path)?;
     ensure_git_exclude(&path)?;
     devcontainer_up(&id, &path, &ws.config)?;
+    Ok(id)
+}
+
+pub fn cmd_open(arg: Option<RepoId>) -> Result<()> {
+    let id = prepare_repository(arg)?;
     attach_zellij(&id)
+}
+
+pub fn cmd_ensure(arg: Option<RepoId>) -> Result<()> {
+    prepare_repository(arg).map(|_| ())
 }
 
 pub fn cmd_up(arg: Option<RepoId>) -> Result<()> {

@@ -247,6 +247,7 @@ devctl init
 
 devctl open  [owner/repo]
 devctl up    [owner/repo]
+devctl ensure [owner/repo]
 devctl shell [owner/repo]
 devctl exec  [owner/repo] -- <command...>
 
@@ -312,7 +313,19 @@ repository解決
 → Zellij sessionへattach/create
 ```
 
-`open` のみ、repositoryが存在しなければcloneする。
+`open` / `ensure` は、repositoryが存在しなければcloneする。
+
+repository指定を省略した場合は、current repositoryを使用する。
+
+repository外で省略された場合はerror。
+
+## `devctl ensure`
+
+AIやautomation向けの、非対話かつ冪等なrepository準備command。
+
+`devctl open` と同じく、未cloneならrepositoryをcloneし、`CLAUDE.local.md` と
+`.git/info/exclude` を整備してDev Containerを起動する。Zellij sessionへのattachは
+行わず、準備完了後に終了する。
 
 repository指定を省略した場合は、current repositoryを使用する。
 
