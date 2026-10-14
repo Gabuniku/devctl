@@ -24,6 +24,8 @@ pub enum Commands {
     Open { repo: Option<RepoId> },
     /// Start a repository's Dev Container
     Up { repo: Option<RepoId> },
+    /// Prepare a repository without attaching (clone if needed, start its Dev Container)
+    Ensure { repo: Option<RepoId> },
     /// Attach to a repository's shell session
     Shell { repo: Option<RepoId> },
     /// Execute a command in a repository's Dev Container
@@ -38,4 +40,26 @@ pub enum Commands {
     Doctor,
     /// Proxy SSH traffic to a repository's Dev Container
     SshProxy { name: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_ensure_without_repository() {
+        let cli = Cli::try_parse_from(["devctl", "ensure"]).unwrap();
+
+        assert!(matches!(cli.command, Commands::Ensure { repo: None }));
+    }
+
+    #[test]
+    fn parses_ensure_with_repository() {
+        let cli = Cli::try_parse_from(["devctl", "ensure", "owner/repo"]).unwrap();
+
+        let Commands::Ensure { repo: Some(repo) } = cli.command else {
+            panic!("expected ensure command with a repository");
+        };
+        assert_eq!(repo.to_string(), "owner/repo");
+    }
 }

@@ -16,6 +16,7 @@ fn main() -> Result<()> {
         Commands::List { user } => workspace::cmd_list(user),
         Commands::Open { repo } => workspace::cmd_open(repo),
         Commands::Up { repo } => workspace::cmd_up(repo),
+        Commands::Ensure { repo } => workspace::cmd_ensure(repo),
         Commands::Shell { repo } => workspace::cmd_shell(repo),
         Commands::Exec { repo, args } => {
             let status = workspace::cmd_exec(repo, args)?;
