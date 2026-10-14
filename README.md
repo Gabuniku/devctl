@@ -43,6 +43,13 @@ cd ~/workspaces
 devctl init
 ```
 
+Claude Code / Codex向けのdev-box共通指示を `~/.claude/CLAUDE.md` と
+`${CODEX_HOME:-$HOME/.codex}/AGENTS.md` へ配置する。
+
+```bash
+devctl agents install
+```
+
 repository はこの下に置かれる。
 
 ```
@@ -85,6 +92,7 @@ devctl shell                     # コンテナ内 bash
 | `devctl exec [owner/repo] -- <cmd>` | コンテナ内でコマンドを実行する |
 | `devctl shell [owner/repo]` | コンテナ内で bash を起動する |
 | `devctl doctor` | 外部コマンド・GitHub 認証・選択したコンテナエンジンへの接続を診断する |
+| `devctl agents install [--print]` | Claude Code / Codex向けのユーザー共通指示を配置する |
 
 `context` / `list` / `ssh-target` / `doctor` は `--json` で機械可読なJSONを出力できる。
 JSON利用時、stdoutにはJSONだけが出力される。

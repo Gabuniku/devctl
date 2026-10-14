@@ -256,6 +256,7 @@ devctl context [owner/repo]
 devctl ssh-proxy <devctl-owner--repo>
 devctl ssh-target [owner/repo]
 devctl doctor
+devctl agents install [--print]
 ```
 
 CLI parserには `clap` deriveを使用する。
@@ -491,6 +492,38 @@ git -C <repo> rev-parse --git-path info/exclude
 既に存在する場合は何もしない。重複行を生成しない。
 
 MVPでは専用コメントblock等の高度な管理は不要。
+
+## `devctl agents install`
+
+dev-boxで動くClaude Code / Codex向けのユーザー共通指示を配置する。
+
+```text
+~/.claude/CLAUDE.md
+$CODEX_HOME/AGENTS.md（CODEX_HOMEが未設定なら ~/.codex/AGENTS.md）
+```
+
+Codex側のpathは環境変数 `CODEX_HOME` が設定されていればそれを優先し、未設定時だけ
+`$HOME/.codex` を使用する。
+
+両ファイルには次のmarkerで囲んだ同一の管理blockを使用する。
+
+```markdown
+<!-- BEGIN devctl managed block. Manual changes inside may be overwritten. -->
+...
+<!-- END devctl managed block -->
+```
+
+ファイルがなければ親directoryとともに作成する。markerがなければ既存内容の末尾へ
+空行を挟んで追加し、markerがあれば管理blockだけを置換する。管理block外のユーザー
+記述は変更しない。片方のmarkerだけがある場合や順序が逆の場合は、ファイルを変更せず
+path付きのerrorにする。内容が同じ場合は書き込まない。
+
+各ファイルについて `updated <path>` または `unchanged <path>` を出力する。
+`--print` はファイルを変更せず、markerを含む管理blockを標準出力へ表示する。
+
+ここで配置する内容は全dev-box共通の実行規約である。一方、`CLAUDE.local.md` は
+「このrepositoryはDev Containerで動く」ことを示すrepository localの案内として、
+引き続きrepositoryの準備時に生成する。
 
 ## Dev Containerが存在しないrepository
 
@@ -844,6 +877,7 @@ toml = "..."
 
 ```text
 src/
+├── agents.rs   … Claude / Codex向けユーザー共通指示の配置
 ├── main.rs      … dispatchのみ
 ├── cli.rs       … clap定義 / command / args
 ├── config.rs    … devctl.toml / workspace root検出 / config parse
@@ -868,6 +902,7 @@ src/
 * managed repository pathからRepoIdを復元するlogic
 * `CLAUDE.local.md` expected contents
 * `.git/info/exclude` への重複なし追加logic
+* agent管理blockの追加・置換・不正marker検出logic
 * workspace root探索logicの可能な範囲
 
 external CLIを本格的にmockする巨大test frameworkは作らない。

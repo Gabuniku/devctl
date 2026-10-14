@@ -59,6 +59,21 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Manage global instructions for coding agents
+    Agents {
+        #[command(subcommand)]
+        command: AgentsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentsCommand {
+    /// Install global development environment instructions
+    Install {
+        /// Print the managed block without writing files
+        #[arg(long)]
+        print: bool,
+    },
 }
 
 #[cfg(test)]
@@ -80,5 +95,29 @@ mod tests {
             panic!("expected ensure command with a repository");
         };
         assert_eq!(repo.to_string(), "owner/repo");
+    }
+
+    #[test]
+    fn parses_agents_install() {
+        let cli = Cli::try_parse_from(["devctl", "agents", "install"]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Commands::Agents {
+                command: AgentsCommand::Install { print: false }
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_agents_install_print() {
+        let cli = Cli::try_parse_from(["devctl", "agents", "install", "--print"]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Commands::Agents {
+                command: AgentsCommand::Install { print: true }
+            }
+        ));
     }
 }
