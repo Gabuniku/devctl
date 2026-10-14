@@ -6,7 +6,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-use crate::config::{load_workspace, Config, Mount, Workspace};
+use crate::config::{load_workspace, Config, ContainerEngine, Mount, Workspace};
 use crate::repo::{
     clone_repo, git_toplevel, is_git_worktree, repo_id_from_path, repo_path, RepoId,
 };
@@ -123,7 +123,7 @@ pub fn cmd_list(include_user: bool) -> Result<()> {
         let repos = repos
             .into_iter()
             .map(|(id, path)| {
-                let user = devcontainer_remote_user(&id, &path)?;
+                let user = devcontainer_remote_user(&id, &path, ws.config.container_engine)?;
                 Ok((id.to_string(), user))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -161,11 +161,20 @@ fn remote_user_from_json_lines(output: &str) -> Option<String> {
         .find_map(|configuration| configuration.merged_configuration.remote_user)
 }
 
-fn devcontainer_remote_user(id: &RepoId, repo_path: &Path) -> Result<String> {
+fn devcontainer_remote_user(
+    id: &RepoId,
+    repo_path: &Path,
+    engine: ContainerEngine,
+) -> Result<String> {
+    let mut args = vec![
+        OsString::from("read-configuration"),
+        OsString::from("--workspace-folder"),
+        repo_path.as_os_str().to_owned(),
+        OsString::from("--include-merged-configuration"),
+    ];
+    args.extend(docker_path_args(engine));
     let output = Command::new("devcontainer")
-        .args(["read-configuration", "--workspace-folder"])
-        .arg(repo_path)
-        .arg("--include-merged-configuration")
+        .args(args)
         .output()
         .with_context(|| format!("failed to read Dev Container configuration for {id}"))?;
     if !output.status.success() {
@@ -185,7 +194,7 @@ pub fn cmd_ssh_target(arg: Option<RepoId>) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
-    let user = devcontainer_remote_user(&id, &path)?;
+    let user = devcontainer_remote_user(&id, &path, ws.config.container_engine)?;
     println!("{}", ssh_target(&id, &user));
     Ok(())
 }
@@ -310,7 +319,15 @@ fn devcontainer_up_args(
         args.push(OsString::from("--mount"));
         args.push(mount_spec(mount, home)?.into());
     }
+    args.extend(docker_path_args(config.container_engine));
     Ok(args)
+}
+
+fn docker_path_args(engine: ContainerEngine) -> Vec<OsString> {
+    match engine {
+        ContainerEngine::Docker => Vec::new(),
+        ContainerEngine::Podman => vec!["--docker-path".into(), engine.program().into()],
+    }
 }
 
 pub fn devcontainer_up(id: &RepoId, repo_path: &Path, config: &Config) -> Result<()> {
@@ -393,7 +410,7 @@ pub fn cmd_shell(arg: Option<RepoId>) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (_, path) = resolve_repo(&ws, arg, &cwd)?;
-    let status = interactive_devcontainer_exec(&path, ["bash"])?;
+    let status = interactive_devcontainer_exec(&path, ws.config.container_engine, ["bash"])?;
     if !status.success() {
         bail!("devcontainer shell exited with {status}");
     }
@@ -407,17 +424,26 @@ pub fn cmd_exec(arg: Option<RepoId>, argv: Vec<String>) -> Result<ExitStatus> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (_, path) = resolve_repo(&ws, arg, &cwd)?;
-    interactive_devcontainer_exec(&path, argv)
+    interactive_devcontainer_exec(&path, ws.config.container_engine, argv)
 }
 
-fn interactive_devcontainer_exec<I, S>(repo_path: &Path, argv: I) -> Result<ExitStatus>
+fn interactive_devcontainer_exec<I, S>(
+    repo_path: &Path,
+    engine: ContainerEngine,
+    argv: I,
+) -> Result<ExitStatus>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    let mut args = vec![
+        OsString::from("exec"),
+        OsString::from("--workspace-folder"),
+        repo_path.as_os_str().to_owned(),
+    ];
+    args.extend(docker_path_args(engine));
     Command::new("devcontainer")
-        .args(["exec", "--workspace-folder"])
-        .arg(repo_path)
+        .args(args)
         .args(argv)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -576,6 +602,40 @@ target = "/home/vscode/.ssh/authorized_keys"
                 .unwrap();
 
         assert_eq!(args, vec!["up", "--workspace-folder", "/repo"]);
+    }
+
+    #[test]
+    fn omits_docker_path_for_docker() {
+        assert!(docker_path_args(ContainerEngine::Docker).is_empty());
+    }
+
+    #[test]
+    fn selects_podman_as_docker_path() {
+        assert_eq!(
+            docker_path_args(ContainerEngine::Podman),
+            vec!["--docker-path", "podman"]
+        );
+    }
+
+    #[test]
+    fn adds_podman_docker_path_to_up() {
+        let args = devcontainer_up_args(
+            &config("container_engine = \"podman\"\n"),
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+        )
+        .unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--docker-path",
+                "podman"
+            ]
+        );
     }
 
     #[test]

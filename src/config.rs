@@ -8,9 +8,28 @@ use serde::Deserialize;
 
 const CONFIG_FILE: &str = "devctl.toml";
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainerEngine {
+    #[default]
+    Docker,
+    Podman,
+}
+
+impl ContainerEngine {
+    pub fn program(self) -> &'static str {
+        match self {
+            Self::Docker => "docker",
+            Self::Podman => "podman",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Config {
     pub projects_dir: String,
+    #[serde(default)]
+    pub container_engine: ContainerEngine,
     #[serde(default)]
     pub personal_features: BTreeMap<String, toml::Table>,
     #[serde(default)]

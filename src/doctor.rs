@@ -3,13 +3,18 @@ use std::ffi::OsString;
 use anyhow::{bail, Result};
 
 use crate::command::{capture_stdout, capture_stdout_quiet};
-
-const COMMANDS: [&str; 5] = ["git", "gh", "docker", "devcontainer", "zellij"];
+use crate::config::{load_workspace, ContainerEngine};
 
 pub fn cmd_doctor() -> Result<()> {
     let mut failed = false;
+    let current_dir = std::env::current_dir()?;
+    let engine = load_workspace(&current_dir)
+        .map(|workspace| workspace.config.container_engine)
+        .unwrap_or_default();
+    let engine_program = engine.program();
+    let commands = ["git", "gh", engine_program, "devcontainer", "zellij"];
 
-    for program in COMMANDS {
+    for program in commands {
         let args = [OsString::from("--version")];
         match capture_stdout(program, &args) {
             Ok(output) => {
@@ -37,9 +42,13 @@ pub fn cmd_doctor() -> Result<()> {
         )
         .is_ok(),
     );
+    let engine_label = match engine {
+        ContainerEngine::Docker => "Docker daemon",
+        ContainerEngine::Podman => "Podman",
+    };
     failed |= !print_check(
-        "Docker daemon",
-        capture_stdout_quiet("docker", &[OsString::from("info")]).is_ok(),
+        engine_label,
+        capture_stdout_quiet(engine_program, &[OsString::from("info")]).is_ok(),
     );
 
     if failed {
