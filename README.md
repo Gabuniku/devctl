@@ -78,12 +78,16 @@ devctl shell                     # コンテナ内 bash
 |---|---|
 | `devctl init` | 管理ルートを初期化する |
 | `devctl list` | 管理下の repository を一覧する |
+| `devctl context [owner/repo]` | repository の主要情報を表示する |
 | `devctl open [owner/repo]` | 必要なら clone し、コンテナ起動後 Zellij に接続する |
 | `devctl ensure [owner/repo]` | 必要なら clone し、Dev Container を起動して終了する |
 | `devctl up [owner/repo]` | Dev Container を起動する |
 | `devctl exec [owner/repo] -- <cmd>` | コンテナ内でコマンドを実行する |
 | `devctl shell [owner/repo]` | コンテナ内で bash を起動する |
 | `devctl doctor` | 外部コマンド・GitHub 認証・選択したコンテナエンジンへの接続を診断する |
+
+`context` / `list` / `ssh-target` / `doctor` は `--json` で機械可読なJSONを出力できる。
+JSON利用時、stdoutにはJSONだけが出力される。
 
 clone するのは `open` / `ensure` だけ。`up` / `exec` / `shell` は暗黙に repository を作らない。
 

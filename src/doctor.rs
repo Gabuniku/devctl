@@ -1,57 +1,112 @@
 use std::ffi::OsString;
 
 use anyhow::{bail, Result};
+use serde::Serialize;
 
 use crate::command::{capture_stdout, capture_stdout_quiet};
 use crate::config::{load_workspace, ContainerEngine};
 
-pub fn cmd_doctor() -> Result<()> {
-    let mut failed = false;
+#[derive(Debug, Serialize)]
+struct CommandCheck {
+    name: String,
+    ok: bool,
+    version: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct Check {
+    name: String,
+    ok: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DoctorOutput {
+    ok: bool,
+    container_engine: ContainerEngine,
+    commands: Vec<CommandCheck>,
+    checks: Vec<Check>,
+}
+
+fn diagnose(engine: ContainerEngine) -> DoctorOutput {
+    let engine_program = engine.program();
+    let commands = ["git", "gh", engine_program, "devcontainer", "zellij"];
+    let commands = commands
+        .into_iter()
+        .map(|program| {
+            let args = [OsString::from("--version")];
+            match capture_stdout(program, &args) {
+                Ok(output) => {
+                    let version = extract_version(&output)
+                        .unwrap_or_else(|| output.lines().next().unwrap_or("").trim())
+                        .to_owned();
+                    CommandCheck {
+                        name: program.to_owned(),
+                        ok: true,
+                        version: Some(version),
+                    }
+                }
+                Err(_) => CommandCheck {
+                    name: program.to_owned(),
+                    ok: false,
+                    version: None,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    let checks = vec![
+        Check {
+            name: "github_auth".to_owned(),
+            ok: capture_stdout_quiet(
+                "gh",
+                &[
+                    OsString::from("auth"),
+                    OsString::from("status"),
+                    OsString::from("--active"),
+                ],
+            )
+            .is_ok(),
+        },
+        Check {
+            name: "container_engine".to_owned(),
+            ok: capture_stdout_quiet(engine_program, &[OsString::from("info")]).is_ok(),
+        },
+    ];
+    let ok = commands.iter().all(|check| check.ok) && checks.iter().all(|check| check.ok);
+    DoctorOutput {
+        ok,
+        container_engine: engine,
+        commands,
+        checks,
+    }
+}
+
+pub fn cmd_doctor(json: bool) -> Result<()> {
     let current_dir = std::env::current_dir()?;
     let engine = load_workspace(&current_dir)
         .map(|workspace| workspace.config.container_engine)
         .unwrap_or_default();
-    let engine_program = engine.program();
-    let commands = ["git", "gh", engine_program, "devcontainer", "zellij"];
+    let output = diagnose(engine);
 
-    for program in commands {
-        let args = [OsString::from("--version")];
-        match capture_stdout(program, &args) {
-            Ok(output) => {
-                let version = extract_version(&output)
-                    .unwrap_or_else(|| output.lines().next().unwrap_or("").trim());
-                println!("{program:<12} OK  {version}");
-            }
-            Err(_) => {
-                println!("{program:<12} FAIL");
-                failed = true;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        for command in &output.commands {
+            if let Some(version) = &command.version {
+                println!("{:<12} OK  {version}", command.name);
+            } else {
+                println!("{:<12} FAIL", command.name);
             }
         }
+        println!();
+        print_check("GitHub auth", output.checks[0].ok);
+        let engine_label = match engine {
+            ContainerEngine::Docker => "Docker daemon",
+            ContainerEngine::Podman => "Podman",
+        };
+        print_check(engine_label, output.checks[1].ok);
     }
 
-    println!();
-    failed |= !print_check(
-        "GitHub auth",
-        capture_stdout_quiet(
-            "gh",
-            &[
-                OsString::from("auth"),
-                OsString::from("status"),
-                OsString::from("--active"),
-            ],
-        )
-        .is_ok(),
-    );
-    let engine_label = match engine {
-        ContainerEngine::Docker => "Docker daemon",
-        ContainerEngine::Podman => "Podman",
-    };
-    failed |= !print_check(
-        engine_label,
-        capture_stdout_quiet(engine_program, &[OsString::from("info")]).is_ok(),
-    );
-
-    if failed {
+    if !output.ok {
         bail!("one or more doctor checks failed");
     }
     Ok(())
@@ -75,7 +130,7 @@ fn extract_version(output: &str) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_version;
+    use super::*;
 
     #[test]
     fn extracts_version_from_common_outputs() {
@@ -93,5 +148,32 @@ mod tests {
     #[test]
     fn returns_none_when_output_has_no_version() {
         assert_eq!(extract_version("version unknown"), None);
+    }
+
+    #[test]
+    fn serializes_doctor_output_with_null_version() {
+        let output = DoctorOutput {
+            ok: false,
+            container_engine: ContainerEngine::Podman,
+            commands: vec![CommandCheck {
+                name: "git".into(),
+                ok: false,
+                version: None,
+            }],
+            checks: vec![Check {
+                name: "github_auth".into(),
+                ok: true,
+            }],
+        };
+
+        assert_eq!(
+            serde_json::to_value(output).unwrap(),
+            serde_json::json!({
+                "ok": false,
+                "container_engine": "podman",
+                "commands": [{"name": "git", "ok": false, "version": null}],
+                "checks": [{"name": "github_auth", "ok": true}]
+            })
+        );
     }
 }
