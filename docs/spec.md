@@ -537,7 +537,7 @@ PC上のeditor (Zed等) からDev Container内へSSHで入り、LSPをコンテ�
 ホストVMに言語ごとのtoolchainを入れずに済ませることが目的である。
 
 ```text
-PC (editor) --ssh--> devbox --docker exec--> container内 sshd --> editorのremote server
+PC (editor) --ssh--> devbox --engine exec--> container内 sshd --> editorのremote server
                                                                   └─ LSPはここで動く
 ```
 
@@ -559,8 +559,8 @@ Host devctl-*
 名前をowner/repoへ分解 → repository path算出 → containerを特定 → sshd -i をexec
 ```
 
-* containerの特定は `docker ps -q --filter label=devcontainer.local_folder=<abs-repo-path>`
-* `exec docker exec -i <cid> /usr/sbin/sshd -i` で中継する。portは公開しない
+* containerの特定は選択したコンテナエンジンの `ps -q --filter label=devcontainer.local_folder=<abs-repo-path>`
+* 選択したコンテナエンジンで `exec -i <cid> /usr/sbin/sshd -i` を実行して中継する。portは公開しない
 * **containerを起動しない。** 未起動なら「`devctl up` を先に実行せよ」というerrorで止める。
   `ProxyCommand` はSSHのhandshake中に走るため、ここで `devcontainer up` を始めると
   timeoutして原因も分からなくなる
@@ -640,6 +640,28 @@ target = "/home/vscode/.ssh/authorized_keys"
 どちらも素通しのflagであり、devctlがdevcontainer設定を解析する必要はない。
 `CLAUDE.local.md` と同じ「個人環境の情報はdevctlが持ち、共有fileは汚さない」方針の延長である。
 
+### コンテナエンジン
+
+コンテナエンジンは `devctl.toml` の `container_engine` で選択する。
+未指定時と `"docker"` 指定時は標準の Docker を使う。Podman 対応は experimental とする。
+
+```toml
+container_engine = "podman"
+```
+
+Podman 選択時は `devcontainer up` / `exec` / `read-configuration` に
+`--docker-path podman` を付ける。Docker 選択時はこのflagを付けず、従来どおり呼び出す。
+`ssh-proxy` の `ps` / `exec` と `doctor` のversion・接続確認も選択したエンジンに追従する。
+
+以下は対象外とする。
+
+* Docker / Podman APIの直接利用
+* docker-compose系の設定 (`--docker-compose-path`)
+* rootless / rootfulの切り替え
+* Podman固有optionの追加
+* DockerとPodmanの完全な挙動差吸収
+* コンテナエンジンdaemonの自動起動
+
 ### 実装しないこと
 
 以下に手を出すとworkspace platformの再実装になる。境界として明記する。
@@ -660,7 +682,7 @@ MVPに含める。
 
 * `git`
 * `gh`
-* `docker`
+* 選択したコンテナエンジン (`docker` または `podman`。workspaceを読めない場合は `docker`)
 * `devcontainer`
 * `zellij`
 
@@ -670,13 +692,13 @@ MVPに含める。
 
 ```bash
 gh auth status
-docker info
+docker info  # Podman選択時は podman info
 ```
 
 相当を使い、
 
 * GitHub CLIが認証されているか
-* Docker daemonへ接続できるか
+* 選択したコンテナエンジンへ接続できるか
 
 を確認する。
 
@@ -692,7 +714,7 @@ devcontainer OK
 zellij       OK
 
 GitHub auth  OK
-Docker daemon OK
+Docker daemon OK  # Podman選択時は Podman
 ```
 
 失敗した項目が分かる表示にする。

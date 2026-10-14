@@ -20,6 +20,13 @@ devctl open owner/repo
 
 `devctl doctor` で一括確認できる。
 
+コンテナエンジンは標準で Docker を使う。Podman は experimental 対応で、
+管理ルートの `devctl.toml` に次を追加すると選択できる。
+
+```toml
+container_engine = "podman"
+```
+
 ## インストール
 
 ```bash
@@ -75,7 +82,7 @@ devctl shell                     # コンテナ内 bash
 | `devctl up [owner/repo]` | Dev Container を起動する |
 | `devctl exec [owner/repo] -- <cmd>` | コンテナ内でコマンドを実行する |
 | `devctl shell [owner/repo]` | コンテナ内で bash を起動する |
-| `devctl doctor` | 外部コマンド・GitHub 認証・Docker 接続を診断する |
+| `devctl doctor` | 外部コマンド・GitHub 認証・選択したコンテナエンジンへの接続を診断する |
 
 clone するのは `open` だけ。`up` / `exec` / `shell` は暗黙に repository を作らない。
 

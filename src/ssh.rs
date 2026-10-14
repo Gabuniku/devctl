@@ -20,9 +20,10 @@ fn parse_proxy_name(name: &str) -> Result<RepoId> {
 pub fn cmd_ssh_proxy(name: &str) -> Result<()> {
     let id = parse_proxy_name(name)?;
     let workspace = load_workspace(&std::env::current_dir()?)?;
+    let program = workspace.config.container_engine.program();
     let path = repo_path(&workspace, &id);
     let filter = format!("label=devcontainer.local_folder={}", path.display());
-    let output = Command::new("docker")
+    let output = Command::new(program)
         .args(["ps", "-q", "--filter"])
         .arg(filter)
         .stdin(Stdio::null())
@@ -31,15 +32,16 @@ pub fn cmd_ssh_proxy(name: &str) -> Result<()> {
         .context("failed to find Dev Container")?;
 
     if !output.status.success() {
-        bail!("docker ps failed: {}", output.status);
+        bail!("{program} ps failed: {}", output.status);
     }
 
-    let stdout = String::from_utf8(output.stdout).context("docker produced non-UTF-8 output")?;
+    let stdout = String::from_utf8(output.stdout)
+        .with_context(|| format!("{program} produced non-UTF-8 output"))?;
     let Some(container_id) = stdout.lines().find(|line| !line.is_empty()) else {
         bail!("Dev Container for {id} is not running; run `devctl up {id}` first");
     };
 
-    let error = Command::new("docker")
+    let error = Command::new(program)
         .args(["exec", "-i", container_id, "/usr/sbin/sshd", "-i"])
         .exec();
     Err(error).context("failed to exec sshd in Dev Container")
