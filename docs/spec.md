@@ -252,6 +252,7 @@ devctl shell [owner/repo]
 devctl exec  [owner/repo] -- <command...>
 
 devctl list
+devctl context [owner/repo]
 devctl ssh-proxy <devctl-owner--repo>
 devctl ssh-target [owner/repo]
 devctl doctor
@@ -529,6 +530,37 @@ yattulab/qi-bot-rs
 
 Dev Containerの起動状態やgitのdirty状態は表示しない。
 Dockerやgitへの問い合わせが増えて薄さが失われるため、MVPでは対象外とする。
+
+## `devctl context [owner/repo]`
+
+automationがrepositoryの主要な情報を安定して取得するためのcommand。
+repositoryは `up` 等と同様に、引数またはcurrent directoryから解決する。cloneやcontainer起動は行わない。
+
+```text
+$ devctl context Gabuniku/devctl
+repo: Gabuniku/devctl
+workspace_root: /home/gabuniku/workspaces
+repo_path: /home/gabuniku/workspaces/projects/Gabuniku/devctl
+container_engine: docker
+remote_user: vscode
+session: dev-Gabuniku--devctl
+ssh_target: vscode@devctl-Gabuniku--devctl
+```
+
+`remote_user` は `devcontainer read-configuration` の結果を使い、解決できない場合はerrorとする。
+
+## 機械可読出力 (`--json`)
+
+`context` / `list` / `ssh-target` / `doctor` は `--json` を受け付ける。
+成功時のstdoutにはpretty-printしたJSONを1つだけ出し、説明文やprogressを混ぜない。
+errorはstderrへ出し、終了statusを非0にする。
+
+* `context`: `repo`, `workspace_root`, `repo_path`, `container_engine`, `remote_user`, `session`, `ssh_target`
+* `list`: `repo`, `path` を持つobjectのarray。`--user` 併用時は各objectに `remote_user` を加える
+* `ssh-target`: `repo`, `user`, `target`
+* `doctor`: 全体の `ok`, `container_engine`, `commands` (`name`, `ok`, `version`), `checks` (`name`, `ok`)
+
+`doctor --json` は診断失敗時も結果のJSONを出力してから非0で終了する。
 
 ### `open` / `up` は一覧を表示しない
 

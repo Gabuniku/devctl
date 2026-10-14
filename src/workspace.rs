@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::config::{load_workspace, Config, ContainerEngine, Mount, Workspace};
 use crate::repo::{
@@ -80,13 +80,19 @@ fn is_repo_root(path: &Path) -> bool {
     path == top
 }
 
-pub fn cmd_list(include_user: bool) -> Result<()> {
-    let cwd = std::env::current_dir()?;
-    let ws = load_workspace(&cwd)?;
+#[derive(Debug, Serialize)]
+struct ListEntry {
+    repo: String,
+    path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    remote_user: Option<String>,
+}
+
+fn managed_repos(ws: &Workspace) -> Result<Vec<(RepoId, PathBuf)>> {
     let projects_root = ws.projects_root();
     let owners = match fs::read_dir(&projects_root) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
             return Err(error)
                 .with_context(|| format!("failed to read {}", projects_root.display()))
@@ -117,6 +123,33 @@ pub fn cmd_list(include_user: bool) -> Result<()> {
                 ));
             }
         }
+    }
+
+    repos.sort_by_key(|(id, _)| id.to_string());
+    Ok(repos)
+}
+
+pub fn cmd_list(include_user: bool, json: bool) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let ws = load_workspace(&cwd)?;
+    let repos = managed_repos(&ws)?;
+
+    if json {
+        let entries = repos
+            .into_iter()
+            .map(|(id, path)| {
+                let remote_user = include_user
+                    .then(|| devcontainer_remote_user(&id, &path, ws.config.container_engine))
+                    .transpose()?;
+                Ok(ListEntry {
+                    repo: id.to_string(),
+                    path: path.display().to_string(),
+                    remote_user,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
     }
 
     let lines = if include_user {
@@ -190,12 +223,75 @@ pub fn ssh_target(id: &RepoId, user: &str) -> String {
     format!("{user}@devctl-{}--{}", id.owner, id.name)
 }
 
-pub fn cmd_ssh_target(arg: Option<RepoId>) -> Result<()> {
+#[derive(Debug, Serialize)]
+struct SshTargetOutput {
+    repo: String,
+    user: String,
+    target: String,
+}
+
+pub fn cmd_ssh_target(arg: Option<RepoId>, json: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
     let user = devcontainer_remote_user(&id, &path, ws.config.container_engine)?;
-    println!("{}", ssh_target(&id, &user));
+    let target = ssh_target(&id, &user);
+    if json {
+        let output = SshTargetOutput {
+            repo: id.to_string(),
+            user,
+            target,
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("{target}");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct ContextOutput {
+    repo: String,
+    workspace_root: String,
+    repo_path: String,
+    container_engine: ContainerEngine,
+    remote_user: String,
+    session: String,
+    ssh_target: String,
+}
+
+fn format_context(output: &ContextOutput) -> String {
+    format!(
+        "repo: {}\nworkspace_root: {}\nrepo_path: {}\ncontainer_engine: {}\nremote_user: {}\nsession: {}\nssh_target: {}",
+        output.repo,
+        output.workspace_root,
+        output.repo_path,
+        output.container_engine.program(),
+        output.remote_user,
+        output.session,
+        output.ssh_target
+    )
+}
+
+pub fn cmd_context(arg: Option<RepoId>, json: bool) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let ws = load_workspace(&cwd)?;
+    let (id, path) = resolve_repo(&ws, arg, &cwd)?;
+    let remote_user = devcontainer_remote_user(&id, &path, ws.config.container_engine)?;
+    let output = ContextOutput {
+        repo: id.to_string(),
+        workspace_root: ws.root.display().to_string(),
+        repo_path: path.display().to_string(),
+        container_engine: ws.config.container_engine,
+        session: zellij_session_name(&id),
+        ssh_target: ssh_target(&id, &remote_user),
+        remote_user,
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("{}", format_context(&output));
+    }
     Ok(())
 }
 
@@ -534,6 +630,90 @@ mod tests {
                 "mizlinx/gyotaku-rockchip   vscode",
                 "yattulab/qi-bot-rs         vscode",
             ]
+        );
+    }
+
+    #[test]
+    fn serializes_list_entries_with_optional_remote_user() {
+        let entries = vec![
+            ListEntry {
+                repo: "owner/one".into(),
+                path: "/work/owner/one".into(),
+                remote_user: None,
+            },
+            ListEntry {
+                repo: "owner/two".into(),
+                path: "/work/owner/two".into(),
+                remote_user: Some("vscode".into()),
+            },
+        ];
+
+        assert_eq!(
+            serde_json::to_value(entries).unwrap(),
+            serde_json::json!([
+                {"repo": "owner/one", "path": "/work/owner/one"},
+                {"repo": "owner/two", "path": "/work/owner/two", "remote_user": "vscode"}
+            ])
+        );
+    }
+
+    #[test]
+    fn serializes_ssh_target_output() {
+        let output = SshTargetOutput {
+            repo: "owner/repo".into(),
+            user: "vscode".into(),
+            target: "vscode@devctl-owner--repo".into(),
+        };
+
+        assert_eq!(
+            serde_json::to_value(output).unwrap(),
+            serde_json::json!({
+                "repo": "owner/repo",
+                "user": "vscode",
+                "target": "vscode@devctl-owner--repo"
+            })
+        );
+    }
+
+    fn context_output() -> ContextOutput {
+        ContextOutput {
+            repo: "owner/repo".into(),
+            workspace_root: "/work".into(),
+            repo_path: "/work/projects/owner/repo".into(),
+            container_engine: ContainerEngine::Docker,
+            remote_user: "vscode".into(),
+            session: "dev-owner--repo".into(),
+            ssh_target: "vscode@devctl-owner--repo".into(),
+        }
+    }
+
+    #[test]
+    fn serializes_context_output_in_the_documented_shape() {
+        assert_eq!(
+            serde_json::to_value(context_output()).unwrap(),
+            serde_json::json!({
+                "repo": "owner/repo",
+                "workspace_root": "/work",
+                "repo_path": "/work/projects/owner/repo",
+                "container_engine": "docker",
+                "remote_user": "vscode",
+                "session": "dev-owner--repo",
+                "ssh_target": "vscode@devctl-owner--repo"
+            })
+        );
+    }
+
+    #[test]
+    fn formats_context_as_key_value_lines() {
+        assert_eq!(
+            format_context(&context_output()),
+            "repo: owner/repo\n\
+             workspace_root: /work\n\
+             repo_path: /work/projects/owner/repo\n\
+             container_engine: docker\n\
+             remote_user: vscode\n\
+             session: dev-owner--repo\n\
+             ssh_target: vscode@devctl-owner--repo"
         );
     }
 
