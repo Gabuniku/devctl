@@ -19,6 +19,9 @@ pub enum Commands {
         /// Include each Dev Container's remote user
         #[arg(long)]
         user: bool,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Open a repository development environment
     Open { repo: Option<RepoId> },
@@ -35,11 +38,27 @@ pub enum Commands {
         args: Vec<String>,
     },
     /// Print the SSH target for a repository's Dev Container
-    SshTarget { repo: Option<RepoId> },
+    SshTarget {
+        repo: Option<RepoId>,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Check required tools and workspace configuration
-    Doctor,
+    Doctor {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Proxy SSH traffic to a repository's Dev Container
     SshProxy { name: String },
+    /// Print repository context for tools and automation
+    Context {
+        repo: Option<RepoId>,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Manage global instructions for coding agents
     Agents {
         #[command(subcommand)]

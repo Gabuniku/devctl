@@ -14,7 +14,7 @@ use cli::{AgentsCommand, Cli, Commands};
 fn main() -> Result<()> {
     match Cli::parse().command {
         Commands::Init => config::init_workspace(&std::env::current_dir()?),
-        Commands::List { user } => workspace::cmd_list(user),
+        Commands::List { user, json } => workspace::cmd_list(user, json),
         Commands::Open { repo } => workspace::cmd_open(repo),
         Commands::Up { repo } => workspace::cmd_up(repo),
         Commands::Ensure { repo } => workspace::cmd_ensure(repo),
@@ -23,9 +23,10 @@ fn main() -> Result<()> {
             let status = workspace::cmd_exec(repo, args)?;
             std::process::exit(status.code().unwrap_or(1));
         }
-        Commands::SshTarget { repo } => workspace::cmd_ssh_target(repo),
-        Commands::Doctor => doctor::cmd_doctor(),
+        Commands::SshTarget { repo, json } => workspace::cmd_ssh_target(repo, json),
+        Commands::Doctor { json } => doctor::cmd_doctor(json),
         Commands::SshProxy { name } => ssh::cmd_ssh_proxy(&name),
+        Commands::Context { repo, json } => workspace::cmd_context(repo, json),
         Commands::Agents { command } => match command {
             AgentsCommand::Install { print } => agents::cmd_install(print),
         },
