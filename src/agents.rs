@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
@@ -12,9 +12,10 @@ const INSTRUCTIONS: &str = "# Development VM\n\
 - Source files live on the host VM; edit them there.\n\
 - Project runtimes live in Dev Containers. Run project commands with `devctl exec -- <command>` from inside the repository.\n\
 - Use `devctl up` to start the environment of an existing repository; use `devctl ensure owner/repo` when it may not be cloned yet (non-interactive, idempotent).\n\
+- `devctl exec` refuses to run from a git worktree. Run it from the main repository root and `cd` inside the container, e.g. `devctl exec -- bash -lc 'cd .claude/worktrees/<name> && <command>'`. Create worktrees inside the repository (e.g. `.claude/worktrees/`) so the container can see them.\n\
 - Do not install project dependencies directly on the host VM.\n\
 - Do not run `devctl open` or `devctl shell`: they are interactive and will not return.\n\
-- Repositories without a Dev Container are not managed by devctl; follow their own instructions.";
+- devctl requires a Dev Container. For a repository without one, follow that repository's own instructions instead.";
 
 pub fn managed_block() -> String {
     format!("{BEGIN_MARKER}\n{INSTRUCTIONS}\n{END_MARKER}\n")
@@ -74,12 +75,19 @@ fn install_file(path: &Path, block: &str) -> Result<bool> {
     Ok(true)
 }
 
-fn install(home: &Path) -> Result<()> {
-    let block = managed_block();
-    for path in [
+fn instruction_paths(home: &Path, codex_home: Option<&Path>) -> [PathBuf; 2] {
+    [
         home.join(".claude/CLAUDE.md"),
-        home.join(".codex/AGENTS.md"),
-    ] {
+        codex_home.map_or_else(
+            || home.join(".codex/AGENTS.md"),
+            |path| path.join("AGENTS.md"),
+        ),
+    ]
+}
+
+fn install(home: &Path, codex_home: Option<&Path>) -> Result<()> {
+    let block = managed_block();
+    for path in instruction_paths(home, codex_home) {
         let status = if install_file(&path, &block)? {
             "updated"
         } else {
@@ -97,7 +105,8 @@ pub fn cmd_install(print: bool) -> Result<()> {
         return Ok(());
     }
     let home = std::env::var_os("HOME").context("HOME is not set")?;
-    install(Path::new(&home))
+    let codex_home = std::env::var_os("CODEX_HOME");
+    install(Path::new(&home), codex_home.as_deref().map(Path::new))
 }
 
 #[cfg(test)]
@@ -165,5 +174,27 @@ mod tests {
     fn rejects_duplicate_markers() {
         let current = format!("{BEGIN_MARKER}\n{END_MARKER}\n{BEGIN_MARKER}\n{END_MARKER}");
         assert!(upsert_managed_block(Some(&current), "BLOCK\n").is_err());
+    }
+
+    #[test]
+    fn uses_codex_home_when_set() {
+        assert_eq!(
+            instruction_paths(Path::new("/home/user"), Some(Path::new("/opt/codex"))),
+            [
+                PathBuf::from("/home/user/.claude/CLAUDE.md"),
+                PathBuf::from("/opt/codex/AGENTS.md")
+            ]
+        );
+    }
+
+    #[test]
+    fn defaults_codex_home_below_home() {
+        assert_eq!(
+            instruction_paths(Path::new("/home/user"), None),
+            [
+                PathBuf::from("/home/user/.claude/CLAUDE.md"),
+                PathBuf::from("/home/user/.codex/AGENTS.md")
+            ]
+        );
     }
 }

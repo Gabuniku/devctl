@@ -43,7 +43,8 @@ cd ~/workspaces
 devctl init
 ```
 
-Claude Code / Codex向けのdev-box共通指示をユーザー設定へ配置する。
+Claude Code / Codex向けのdev-box共通指示を `~/.claude/CLAUDE.md` と
+`${CODEX_HOME:-$HOME/.codex}/AGENTS.md` へ配置する。
 
 ```bash
 devctl agents install

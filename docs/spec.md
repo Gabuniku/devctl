@@ -498,8 +498,11 @@ dev-boxで動くClaude Code / Codex向けのユーザー共通指示を配置す
 
 ```text
 ~/.claude/CLAUDE.md
-~/.codex/AGENTS.md
+$CODEX_HOME/AGENTS.md（CODEX_HOMEが未設定なら ~/.codex/AGENTS.md）
 ```
+
+Codex側のpathは環境変数 `CODEX_HOME` が設定されていればそれを優先し、未設定時だけ
+`$HOME/.codex` を使用する。
 
 両ファイルには次のmarkerで囲んだ同一の管理blockを使用する。
 
