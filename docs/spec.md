@@ -246,7 +246,7 @@ MVPでは以下のcommandを実装する。
 devctl init
 
 devctl open  [owner/repo]
-devctl up    [owner/repo]
+devctl up    [owner/repo] [--rebuild]
 devctl ensure [owner/repo]
 devctl shell [owner/repo]
 devctl exec  [owner/repo] -- <command...>
@@ -299,6 +299,10 @@ devcontainer up --workspace-folder <absolute-repo-path>
 ```
 
 相当を実行する。
+
+`--rebuild` を指定した場合は、`--workspace-folder <absolute-repo-path>` の直後に
+`--remove-existing-container` を付け、既存の対象Dev Containerを削除して再作成する。
+imageのno-cache buildは行わない。
 
 `up` はrepositoryを勝手にcloneしない。repositoryが存在しない場合はerror。
 

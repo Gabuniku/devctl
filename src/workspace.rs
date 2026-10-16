@@ -397,16 +397,25 @@ fn mount_spec(mount: &Mount, home: Option<&Path>) -> Result<String> {
     ))
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct UpOptions {
+    pub remove_existing_container: bool,
+}
+
 fn devcontainer_up_args(
     config: &Config,
     repo_path: &Path,
     home: Option<&Path>,
+    options: UpOptions,
 ) -> Result<Vec<OsString>> {
     let mut args = vec![
         OsString::from("up"),
         OsString::from("--workspace-folder"),
         repo_path.as_os_str().to_owned(),
     ];
+    if options.remove_existing_container {
+        args.push(OsString::from("--remove-existing-container"));
+    }
     if !config.personal_features.is_empty() {
         args.push(OsString::from("--additional-features"));
         args.push(serde_json::to_string(&config.personal_features)?.into());
@@ -426,11 +435,17 @@ fn docker_path_args(engine: ContainerEngine) -> Vec<OsString> {
     }
 }
 
-pub fn devcontainer_up(id: &RepoId, repo_path: &Path, config: &Config) -> Result<()> {
+pub fn devcontainer_up(
+    id: &RepoId,
+    repo_path: &Path,
+    config: &Config,
+    options: UpOptions,
+) -> Result<()> {
     let args = devcontainer_up_args(
         config,
         repo_path,
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        options,
     )?;
     let status = Command::new("devcontainer")
         .args(args)
@@ -480,7 +495,7 @@ fn prepare_repository(arg: Option<RepoId>) -> Result<RepoId> {
     let (id, path) = resolve_or_clone(&ws, arg, &cwd)?;
     ensure_claude_local(&path)?;
     ensure_git_exclude(&path)?;
-    devcontainer_up(&id, &path, &ws.config)?;
+    devcontainer_up(&id, &path, &ws.config, UpOptions::default())?;
     Ok(id)
 }
 
@@ -493,13 +508,20 @@ pub fn cmd_ensure(arg: Option<RepoId>) -> Result<()> {
     prepare_repository(arg).map(|_| ())
 }
 
-pub fn cmd_up(arg: Option<RepoId>) -> Result<()> {
+pub fn cmd_up(arg: Option<RepoId>, rebuild: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
     ensure_claude_local(&path)?;
     ensure_git_exclude(&path)?;
-    devcontainer_up(&id, &path, &ws.config)
+    devcontainer_up(
+        &id,
+        &path,
+        &ws.config,
+        UpOptions {
+            remove_existing_container: rebuild,
+        },
+    )
 }
 
 pub fn cmd_shell(arg: Option<RepoId>) -> Result<()> {
@@ -736,8 +758,13 @@ mod tests {
 "ghcr.io/devcontainers/features/sshd:1" = { version = "latest" }
 "#,
         );
-        let args =
-            devcontainer_up_args(&config, Path::new("/repo"), Some(Path::new("/home/me"))).unwrap();
+        let args = devcontainer_up_args(
+            &config,
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             args,
@@ -760,8 +787,13 @@ source = "~/.ssh/devcontainer_authorized_keys"
 target = "/home/vscode/.ssh/authorized_keys"
 "#,
         );
-        let args =
-            devcontainer_up_args(&config, Path::new("/repo"), Some(Path::new("/home/me"))).unwrap();
+        let args = devcontainer_up_args(
+            &config,
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(
             args,
@@ -777,9 +809,13 @@ target = "/home/vscode/.ssh/authorized_keys"
 
     #[test]
     fn omits_personal_feature_and_mount_flags_when_empty() {
-        let args =
-            devcontainer_up_args(&config(""), Path::new("/repo"), Some(Path::new("/home/me")))
-                .unwrap();
+        let args = devcontainer_up_args(
+            &config(""),
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions::default(),
+        )
+        .unwrap();
 
         assert_eq!(args, vec!["up", "--workspace-folder", "/repo"]);
     }
@@ -803,6 +839,7 @@ target = "/home/vscode/.ssh/authorized_keys"
             &config("container_engine = \"podman\"\n"),
             Path::new("/repo"),
             Some(Path::new("/home/me")),
+            UpOptions::default(),
         )
         .unwrap();
 
@@ -812,6 +849,54 @@ target = "/home/vscode/.ssh/authorized_keys"
                 "up",
                 "--workspace-folder",
                 "/repo",
+                "--docker-path",
+                "podman"
+            ]
+        );
+    }
+
+    #[test]
+    fn adds_remove_existing_container_when_requested() {
+        let args = devcontainer_up_args(
+            &config(""),
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions {
+                remove_existing_container: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--remove-existing-container"
+            ]
+        );
+    }
+
+    #[test]
+    fn combines_rebuild_with_podman_docker_path() {
+        let args = devcontainer_up_args(
+            &config("container_engine = \"podman\"\n"),
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions {
+                remove_existing_container: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--remove-existing-container",
                 "--docker-path",
                 "podman"
             ]

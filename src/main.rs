@@ -16,7 +16,7 @@ fn main() -> Result<()> {
         Commands::Init => config::init_workspace(&std::env::current_dir()?),
         Commands::List { user, json } => workspace::cmd_list(user, json),
         Commands::Open { repo } => workspace::cmd_open(repo),
-        Commands::Up { repo } => workspace::cmd_up(repo),
+        Commands::Up { repo, rebuild } => workspace::cmd_up(repo, rebuild),
         Commands::Ensure { repo } => workspace::cmd_ensure(repo),
         Commands::Shell { repo } => workspace::cmd_shell(repo),
         Commands::Exec { repo, args } => {
