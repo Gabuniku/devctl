@@ -75,6 +75,7 @@ repository の中にいれば `owner/repo` を省略できる。
 ```bash
 cd ~/workspaces/projects/owner/repo
 devctl up                        # コンテナ起動
+devctl up --rebuild              # 既存コンテナを再作成
 devctl exec -- cargo test        # コンテナ内で実行
 devctl shell                     # コンテナ内 bash
 ```
@@ -88,7 +89,7 @@ devctl shell                     # コンテナ内 bash
 | `devctl context [owner/repo]` | repository の主要情報を表示する |
 | `devctl open [owner/repo]` | 必要なら clone し、コンテナ起動後 Zellij に接続する |
 | `devctl ensure [owner/repo]` | 必要なら clone し、Dev Container を起動して終了する |
-| `devctl up [owner/repo]` | Dev Container を起動する |
+| `devctl up [owner/repo] [--rebuild]` | Dev Container を起動する。`--rebuild` で既存コンテナを再作成する |
 | `devctl exec [owner/repo] -- <cmd>` | コンテナ内でコマンドを実行する |
 | `devctl shell [owner/repo]` | コンテナ内で bash を起動する |
 | `devctl doctor` | 外部コマンド・GitHub 認証・選択したコンテナエンジンへの接続を診断する |
@@ -98,6 +99,10 @@ devctl shell                     # コンテナ内 bash
 JSON利用時、stdoutにはJSONだけが出力される。
 
 clone するのは `open` / `ensure` だけ。`up` / `exec` / `shell` は暗黙に repository を作らない。
+
+`devctl up --rebuild` は `runArgs`、Feature、mount の変更を反映したいときに使う。
+再作成すると、コンテナ内に直接置いたデータや手動で入れたツールは消えるが、ホストの
+workspace と外部 volume は残る。そのコンテナへの SSH 接続や `devctl shell` は切断される。
 
 `exec` は `--` 以降をそのまま子プロセスへ渡し、終了コードもそのまま返す。
 

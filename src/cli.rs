@@ -26,7 +26,12 @@ pub enum Commands {
     /// Open a repository development environment
     Open { repo: Option<RepoId> },
     /// Start a repository's Dev Container
-    Up { repo: Option<RepoId> },
+    Up {
+        repo: Option<RepoId>,
+        /// Remove and recreate the existing Dev Container
+        #[arg(long)]
+        rebuild: bool,
+    },
     /// Prepare a repository without attaching (clone if needed, start its Dev Container)
     Ensure { repo: Option<RepoId> },
     /// Attach to a repository's shell session
@@ -93,6 +98,33 @@ mod tests {
 
         let Commands::Ensure { repo: Some(repo) } = cli.command else {
             panic!("expected ensure command with a repository");
+        };
+        assert_eq!(repo.to_string(), "owner/repo");
+    }
+
+    #[test]
+    fn parses_up_without_rebuild() {
+        let cli = Cli::try_parse_from(["devctl", "up"]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Commands::Up {
+                repo: None,
+                rebuild: false
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_up_with_rebuild() {
+        let cli = Cli::try_parse_from(["devctl", "up", "owner/repo", "--rebuild"]).unwrap();
+
+        let Commands::Up {
+            repo: Some(repo),
+            rebuild: true,
+        } = cli.command
+        else {
+            panic!("expected up command with a repository and rebuild enabled");
         };
         assert_eq!(repo.to_string(), "owner/repo");
     }
