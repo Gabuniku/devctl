@@ -373,7 +373,9 @@ pub fn ensure_git_exclude(repo_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn mount_spec(mount: &Mount, home: Option<&Path>) -> Result<String> {
+const REMOTE_USER_PLACEHOLDER: &str = "{remoteUser}";
+
+fn mount_spec(mount: &Mount, home: Option<&Path>, remote_user: Option<&str>) -> Result<String> {
     let source = if mount.source == "~" {
         home.context("HOME is not set; cannot expand mount source ~")?
             .to_path_buf()
@@ -390,10 +392,14 @@ fn mount_spec(mount: &Mount, home: Option<&Path>) -> Result<String> {
             .context("failed to resolve mount source")?
             .join(source)
     };
+    let target = remote_user.map_or_else(
+        || mount.target.clone(),
+        |user| mount.target.replace(REMOTE_USER_PLACEHOLDER, user),
+    );
     Ok(format!(
         "type=bind,source={},target={}",
         source.display(),
-        mount.target
+        target
     ))
 }
 
@@ -407,6 +413,7 @@ fn devcontainer_up_args(
     repo_path: &Path,
     home: Option<&Path>,
     options: UpOptions,
+    remote_user: Option<&str>,
 ) -> Result<Vec<OsString>> {
     let mut args = vec![
         OsString::from("up"),
@@ -421,8 +428,11 @@ fn devcontainer_up_args(
         args.push(serde_json::to_string(&config.personal_features)?.into());
     }
     for mount in &config.mounts {
+        if mount.target.contains(REMOTE_USER_PLACEHOLDER) && remote_user.is_none() {
+            continue;
+        }
         args.push(OsString::from("--mount"));
-        args.push(mount_spec(mount, home)?.into());
+        args.push(mount_spec(mount, home, remote_user)?.into());
     }
     args.extend(docker_path_args(config.container_engine));
     Ok(args)
@@ -441,11 +451,39 @@ pub fn devcontainer_up(
     config: &Config,
     options: UpOptions,
 ) -> Result<()> {
+    let needs_remote_user = config
+        .mounts
+        .iter()
+        .any(|mount| mount.target.contains(REMOTE_USER_PLACEHOLDER));
+    let remote_user = if needs_remote_user {
+        match devcontainer_remote_user(id, repo_path, config.container_engine) {
+            Ok(user) => Some(user),
+            Err(error) => {
+                for mount in config
+                    .mounts
+                    .iter()
+                    .filter(|mount| mount.target.contains(REMOTE_USER_PLACEHOLDER))
+                {
+                    eprintln!(
+                        concat!(
+                            "warning: skipping mount for {} (target {}): {:#}\n",
+                            "         set \"remoteUser\" in devcontainer.json to enable it"
+                        ),
+                        id, mount.target, error
+                    );
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
     let args = devcontainer_up_args(
         config,
         repo_path,
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
         options,
+        remote_user.as_deref(),
     )?;
     let status = Command::new("devcontainer")
         .args(args)
@@ -763,6 +801,7 @@ mod tests {
             Path::new("/repo"),
             Some(Path::new("/home/me")),
             UpOptions::default(),
+            None,
         )
         .unwrap();
 
@@ -792,6 +831,7 @@ target = "/home/vscode/.ssh/authorized_keys"
             Path::new("/repo"),
             Some(Path::new("/home/me")),
             UpOptions::default(),
+            None,
         )
         .unwrap();
 
@@ -808,12 +848,107 @@ target = "/home/vscode/.ssh/authorized_keys"
     }
 
     #[test]
+    fn replaces_remote_user_in_mount_target() {
+        let config = config(
+            r#"
+[[mounts]]
+source = "~/.ssh/devcontainer_authorized_keys"
+target = "/home/{remoteUser}/.ssh/authorized_keys"
+"#,
+        );
+        let args = devcontainer_up_args(
+            &config,
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions::default(),
+            Some("vscode"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--mount",
+                "type=bind,source=/home/me/.ssh/devcontainer_authorized_keys,target=/home/vscode/.ssh/authorized_keys",
+            ]
+        );
+    }
+
+    #[test]
+    fn omits_unresolved_remote_user_mount_and_keeps_other_mounts() {
+        let config = config(
+            r#"
+[[mounts]]
+source = "/host/keys"
+target = "/home/{remoteUser}/.ssh/authorized_keys"
+
+[[mounts]]
+source = "/host/cache"
+target = "/cache"
+"#,
+        );
+        let args = devcontainer_up_args(
+            &config,
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions::default(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--mount",
+                "type=bind,source=/host/cache,target=/cache",
+            ]
+        );
+    }
+
+    #[test]
+    fn replaces_every_remote_user_placeholder_in_mount_target() {
+        let config = config(
+            r#"
+[[mounts]]
+source = "/host/{remoteUser}"
+target = "/home/{remoteUser}/{remoteUser}"
+"#,
+        );
+        let args = devcontainer_up_args(
+            &config,
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions::default(),
+            Some("node"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            args,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--mount",
+                "type=bind,source=/host/{remoteUser},target=/home/node/node",
+            ]
+        );
+    }
+
+    #[test]
     fn omits_personal_feature_and_mount_flags_when_empty() {
         let args = devcontainer_up_args(
             &config(""),
             Path::new("/repo"),
             Some(Path::new("/home/me")),
             UpOptions::default(),
+            None,
         )
         .unwrap();
 
@@ -840,6 +975,7 @@ target = "/home/vscode/.ssh/authorized_keys"
             Path::new("/repo"),
             Some(Path::new("/home/me")),
             UpOptions::default(),
+            None,
         )
         .unwrap();
 
@@ -864,6 +1000,7 @@ target = "/home/vscode/.ssh/authorized_keys"
             UpOptions {
                 remove_existing_container: true,
             },
+            None,
         )
         .unwrap();
 
@@ -887,6 +1024,7 @@ target = "/home/vscode/.ssh/authorized_keys"
             UpOptions {
                 remove_existing_container: true,
             },
+            None,
         )
         .unwrap();
 
