@@ -63,6 +63,18 @@ repository はこの下に置かれる。
 `devctl.toml` は管理ルートの目印でもあり、以降どのサブディレクトリからでも
 コマンドが効く。
 
+個人用のFeatureやmountも `devctl.toml` で指定できる。mountのtargetに
+`{remoteUser}` を書くと、repositoryのDev Container設定に応じて展開される。
+
+```toml
+[personal_features]
+"ghcr.io/devcontainers/features/sshd:1" = {}
+
+[[mounts]]
+source = "~/.ssh/devcontainer_authorized_keys"
+target = "/home/{remoteUser}/.ssh/authorized_keys"
+```
+
 ## 使い方
 
 ```bash

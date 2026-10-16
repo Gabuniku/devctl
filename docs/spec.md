@@ -715,11 +715,17 @@ repository数に比例して遅くなる。opt-inのflagに留める。
 
 [[mounts]]
 source = "~/.ssh/devcontainer_authorized_keys"
-target = "/home/vscode/.ssh/authorized_keys"
+target = "/home/{remoteUser}/.ssh/authorized_keys"
 ```
 
-`--additional-features <JSON>` と `--mount <spec>` へ変換して渡すだけとする。
-どちらも素通しのflagであり、devctlがdevcontainer設定を解析する必要はない。
+`--additional-features <JSON>` と `--mount <spec>` へ変換して渡す。mountのtargetでは
+`{remoteUser}` を `mergedConfiguration.remoteUser` で単純に文字列置換する。`root` のHOMEは
+`/root` なので、`/home/{remoteUser}` はremote userが`root`の場合には正しいパスにならない。
+remote userを解決できない場合はplaceholderを含むmountだけを飛ばして警告し、起動は続ける。
+placeholderを含むtargetがなければ `read-configuration` は呼ばない。
+
+placeholder展開を除けばどちらも素通しのflagであり、devctlがdevcontainer設定を解析する
+必要はない。
 `CLAUDE.local.md` と同じ「個人環境の情報はdevctlが持ち、共有fileは汚さない」方針の延長である。
 
 ### コンテナエンジン
