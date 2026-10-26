@@ -69,6 +69,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: AgentsCommand,
     },
+    /// Manage repository-local Dev Container configuration stored outside the repository
+    LocalConfig {
+        #[command(subcommand)]
+        command: LocalConfigCommand,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -79,6 +84,21 @@ pub enum AgentsCommand {
         #[arg(long)]
         print: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LocalConfigCommand {
+    /// Create a local Dev Container configuration from a template
+    Init {
+        repo: Option<RepoId>,
+        /// Dev Container template name or full reference
+        #[arg(short = 't', long)]
+        template: String,
+    },
+    /// Print the local Dev Container configuration path
+    Path { repo: Option<RepoId> },
+    /// Remove a local Dev Container configuration
+    Rm { repo: Option<RepoId> },
 }
 
 #[cfg(test)]
@@ -151,5 +171,25 @@ mod tests {
                 command: AgentsCommand::Install { print: true }
             }
         ));
+    }
+
+    #[test]
+    fn parses_local_config_init() {
+        let cli =
+            Cli::try_parse_from(["devctl", "local-config", "init", "owner/repo", "-t", "rust"])
+                .unwrap();
+
+        let Commands::LocalConfig {
+            command:
+                LocalConfigCommand::Init {
+                    repo: Some(repo),
+                    template,
+                },
+        } = cli.command
+        else {
+            panic!("expected local-config init command");
+        };
+        assert_eq!(repo.to_string(), "owner/repo");
+        assert_eq!(template, "rust");
     }
 }

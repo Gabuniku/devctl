@@ -52,6 +52,10 @@ impl Workspace {
     pub fn projects_root(&self) -> PathBuf {
         self.root.join(&self.config.projects_dir)
     }
+
+    pub fn local_config_root(&self, owner: &str, repo: &str) -> PathBuf {
+        self.root.join("local-configs").join(owner).join(repo)
+    }
 }
 
 pub fn find_workspace_root(start: &Path) -> Result<PathBuf> {

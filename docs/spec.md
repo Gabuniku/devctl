@@ -257,6 +257,9 @@ devctl ssh-proxy <devctl-owner--repo>
 devctl ssh-target [owner/repo]
 devctl doctor
 devctl agents install [--print]
+devctl local-config init [owner/repo] -t <template>
+devctl local-config path [owner/repo]
+devctl local-config rm [owner/repo]
 ```
 
 CLI parserには `clap` deriveを使用する。
@@ -533,7 +536,7 @@ path付きのerrorにする。内容が同じ場合は書き込まない。
 
 devcontainer configurationの仕様をRust側で再実装しない。
 
-基本的には、
+repository側にも後述のローカル専用設定にもDev Container設定がない場合は、
 
 ```bash
 devcontainer up --workspace-folder <repo>
@@ -545,6 +548,46 @@ devcontainer up --workspace-folder <repo>
 
 ただしerror messageには、どのrepositoryに対する `devcontainer up` が失敗したか分かるcontextを付ける。
 
+## ローカル専用のDev Container設定
+
+共有repositoryを変更せずに個人用のDev Container設定を持つ場合は、次の場所へ置く。
+
+```text
+<workspace root>/local-configs/<owner>/<repo>/.devcontainer/devcontainer.json
+```
+
+設定は次の優先順位で解決する。
+
+1. repositoryに `.devcontainer/devcontainer.json` または `.devcontainer.json` があれば、それを使う
+2. repository側になくローカル専用設定があれば、それを使う
+3. どちらもなければ、従来どおり設定を明示せずdevcontainer CLIを呼ぶ
+
+repository側の設定とローカル専用設定が両方ある場合はrepository側を優先し、無視する
+ローカル専用設定のpathをwarningへ出す。上流repositoryが後からDev Containerへ対応した際、
+共有される最新設定へ安全に移行しつつ、古い個人設定が残っていることにも気づけるためである。
+設定のマージは行わない。
+
+ローカル専用設定を選んだ場合、`devcontainer up` / `exec` / `read-configuration` の
+すべてに `--config <path>` を付ける。コンテナの識別に設定pathも使われるため、呼び出しごとに
+指定の有無が変わらないようにする。
+
+```bash
+devctl local-config init owner/repo -t rust
+devctl local-config path owner/repo
+devctl local-config rm owner/repo
+```
+
+`init` はrepositoryをcloneせず、管理下に存在するrepositoryだけを対象にする。短いtemplate名は
+`ghcr.io/devcontainers/templates/<template>:latest` に展開し、`/` を含む値は完全な参照として
+そのまま使う。内部では専用directoryをworkspace folderとして
+`devcontainer templates apply --omit-paths '[".github/*"]'` を実行する。repository側の設定や
+既存のローカル専用設定がある場合は拒否し、template適用に失敗した場合は作成したdirectoryを削除する。
+`path` は未作成でも予定pathを表示し、`rm` はrepository分のdirectoryを削除する。
+
+ローカル専用設定内の `build.dockerfile` や `build.context` などの相対pathは、repositoryではなく
+設定ファイルの場所を基準に解決される。repository内のfileを参照する設定を書く場合は、この基準の
+違いに注意する。
+
 ## `devctl list`
 
 管理下のrepositoryを一覧する。
@@ -552,7 +595,7 @@ devcontainer up --workspace-folder <repo>
 ```text
 $ devctl list
 Gabuniku/foo
-yattulab/qi-bot-rs
+yattulab/qi-bot-rs (local config)
 ```
 
 * `<root>/<projects_dir>` を2階層読み、`owner/repo` 形式で1行ずつ出力する
@@ -561,6 +604,8 @@ yattulab/qi-bot-rs
   （clone途中で壊れた残骸やゴミdirectoryを除外するため）
 * 出力順は安定させる（sort）
 * 管理下に何も無ければ何も出力せず正常終了する
+* ローカル専用設定を使うrepositoryは行末に ` (local config)` を付ける。`--user` との併用時も
+  user列との間隔を揃える
 
 管理ルート検出を使うので、repositoryの中からでも実行できる。
 `ls` と違い実行場所に依存しない点が、このcommandを持つ理由である。
@@ -593,7 +638,8 @@ ssh_target: vscode@devctl-Gabuniku--devctl
 errorはstderrへ出し、終了statusを非0にする。
 
 * `context`: `repo`, `workspace_root`, `repo_path`, `container_engine`, `remote_user`, `session`, `ssh_target`
-* `list`: `repo`, `path` を持つobjectのarray。`--user` 併用時は各objectに `remote_user` を加える
+* `list`: `repo`, `path`, `local_config` を持つobjectのarray。`local_config` は常にbooleanで出力し、
+  `--user` 併用時は各objectに `remote_user` を加える
 * `ssh-target`: `repo`, `user`, `target`
 * `doctor`: 全体の `ok`, `container_engine`, `commands` (`name`, `ok`, `version`), `checks` (`name`, `ok`)
 

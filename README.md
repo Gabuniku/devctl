@@ -80,6 +80,7 @@ target = "/home/{remoteUser}/.ssh/authorized_keys"
 ```bash
 devctl list                      # 管理下の repository を一覧
 devctl open owner/repo           # clone → コンテナ起動 → Zellij 接続
+devctl local-config init owner/repo -t rust # repository外に個人用Dev Container設定を作成
 ```
 
 repository の中にいれば `owner/repo` を省略できる。
@@ -106,9 +107,15 @@ devctl shell                     # コンテナ内 bash
 | `devctl shell [owner/repo]` | コンテナ内で bash を起動する |
 | `devctl doctor` | 外部コマンド・GitHub 認証・選択したコンテナエンジンへの接続を診断する |
 | `devctl agents install [--print]` | Claude Code / Codex向けのユーザー共通指示を配置する |
+| `devctl local-config init [owner/repo] -t <template>` | repository外にローカル専用Dev Container設定を作る |
+| `devctl local-config path [owner/repo]` | ローカル専用設定のpathを表示する |
+| `devctl local-config rm [owner/repo]` | ローカル専用設定を削除する |
 
 `context` / `list` / `ssh-target` / `doctor` は `--json` で機械可読なJSONを出力できる。
 JSON利用時、stdoutにはJSONだけが出力される。
+
+ローカル専用設定は `<workspace root>/local-configs/<owner>/<repo>/.devcontainer/devcontainer.json`
+に保存される。repository自身にDev Container設定が追加された場合はrepository側を優先する。
 
 clone するのは `open` / `ensure` だけ。`up` / `exec` / `shell` は暗黙に repository を作らない。
 
