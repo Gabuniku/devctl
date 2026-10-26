@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{load_workspace, Config, ContainerEngine, Mount, Workspace};
 use crate::repo::{
-    clone_repo, git_toplevel, is_git_worktree, repo_id_from_path, repo_path, RepoId,
+    clone_repo, git_common_root, git_toplevel, is_git_worktree, repo_id_from_path, repo_path,
+    RepoId,
 };
 
 const CLAUDE_LOCAL: &str = "<!-- Managed by devctl. Manual changes may be overwritten. -->\n\
@@ -29,7 +30,7 @@ pub fn resolve_repo(ws: &Workspace, arg: Option<RepoId>, cwd: &Path) -> Result<(
             (id, path)
         }
         None => {
-            let top = git_toplevel(cwd).context(
+            let top = git_common_root(cwd).context(
                 "repository was not specified and the current directory is not in one\nrun `devctl list` to see managed repositories",
             )?;
             let id = repo_id_from_path(ws, &top).ok_or_else(|| {
@@ -272,11 +273,50 @@ struct MergedConfiguration {
     remote_user: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceConfiguration {
+    workspace_folder: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct WorkspaceReadConfiguration {
+    workspace: WorkspaceConfiguration,
+}
+
 fn remote_user_from_json_lines(output: &str) -> Option<String> {
     output
         .lines()
         .filter_map(|line| serde_json::from_str::<ReadConfiguration>(line).ok())
         .find_map(|configuration| configuration.merged_configuration.remote_user)
+}
+
+fn workspace_folder_from_json_lines(output: &str) -> Option<PathBuf> {
+    output
+        .lines()
+        .filter_map(|line| serde_json::from_str::<WorkspaceReadConfiguration>(line).ok())
+        .map(|configuration| configuration.workspace.workspace_folder)
+        .next()
+}
+
+fn devcontainer_workspace_folder(
+    id: &RepoId,
+    repo_path: &Path,
+    engine: ContainerEngine,
+    config: Option<&Path>,
+) -> Result<PathBuf> {
+    let args = devcontainer_read_configuration_args(repo_path, engine, config);
+    let output = Command::new("devcontainer")
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to read Dev Container configuration for {id}"))?;
+    if !output.status.success() {
+        bail!("failed to resolve workspace folder for repository {id}");
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .with_context(|| format!("Dev Container configuration for {id} was not UTF-8"))?;
+    workspace_folder_from_json_lines(&stdout)
+        .ok_or_else(|| anyhow::anyhow!("workspace folder is not configured for repository {id}"))
 }
 
 fn devcontainer_remote_user(
@@ -688,10 +728,20 @@ pub fn cmd_up(arg: Option<RepoId>, rebuild: bool) -> Result<()> {
 pub fn cmd_shell(arg: Option<RepoId>) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
+    let explicit = arg.is_some();
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
     let config = resolve_devcontainer_config(&ws, &id, &path);
+    let argv = execution_argv(
+        &id,
+        &path,
+        &cwd,
+        explicit,
+        ws.config.container_engine,
+        config.path(),
+        [OsString::from("bash")],
+    )?;
     let status =
-        interactive_devcontainer_exec(&path, ws.config.container_engine, config.path(), ["bash"])?;
+        interactive_devcontainer_exec(&path, ws.config.container_engine, config.path(), argv)?;
     if !status.success() {
         bail!("devcontainer shell exited with {status}");
     }
@@ -704,9 +754,74 @@ pub fn cmd_exec(arg: Option<RepoId>, argv: Vec<String>) -> Result<ExitStatus> {
     }
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
+    let explicit = arg.is_some();
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
     let config = resolve_devcontainer_config(&ws, &id, &path);
+    let argv = execution_argv(
+        &id,
+        &path,
+        &cwd,
+        explicit,
+        ws.config.container_engine,
+        config.path(),
+        argv.into_iter().map(OsString::from),
+    )?;
     interactive_devcontainer_exec(&path, ws.config.container_engine, config.path(), argv)
+}
+
+fn relative_execution_path(repo_root: &Path, cwd: &Path) -> Result<Option<PathBuf>> {
+    let relative = cwd.strip_prefix(repo_root).map_err(|_| {
+        anyhow::anyhow!(
+            "worktree {} is outside the repository {}; the Dev Container cannot see it\ncreate the worktree inside the repository (for example, under .claude/worktrees/)",
+            cwd.display(),
+            repo_root.display()
+        )
+    })?;
+    Ok((!relative.as_os_str().is_empty()).then(|| relative.to_path_buf()))
+}
+
+fn wrap_exec_argv<I>(container_dir: &Path, argv: I) -> Vec<OsString>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut wrapped = vec![
+        OsString::from("sh"),
+        OsString::from("-c"),
+        OsString::from(r#"cd "$1" && shift && exec "$@""#),
+        OsString::from("sh"),
+        container_dir.as_os_str().to_owned(),
+    ];
+    wrapped.extend(argv);
+    wrapped
+}
+
+fn execution_argv<I>(
+    id: &RepoId,
+    repo_root: &Path,
+    cwd: &Path,
+    explicit: bool,
+    engine: ContainerEngine,
+    config: Option<&Path>,
+    argv: I,
+) -> Result<Vec<OsString>>
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let argv = argv.into_iter().collect::<Vec<_>>();
+    if explicit {
+        return Ok(argv);
+    }
+    let canonical_root = repo_root
+        .canonicalize()
+        .with_context(|| format!("failed to resolve repository path {}", repo_root.display()))?;
+    let canonical_cwd = cwd
+        .canonicalize()
+        .with_context(|| format!("failed to resolve current directory {}", cwd.display()))?;
+    let Some(relative) = relative_execution_path(&canonical_root, &canonical_cwd)? else {
+        return Ok(argv);
+    };
+    let workspace_folder = devcontainer_workspace_folder(id, repo_root, engine, config)?;
+    Ok(wrap_exec_argv(&workspace_folder.join(relative), argv))
 }
 
 fn devcontainer_exec_args(
@@ -1119,6 +1234,72 @@ mod tests {
         assert_eq!(
             remote_user_from_json_lines(output).as_deref(),
             Some("vscode")
+        );
+    }
+
+    #[test]
+    fn reads_workspace_folder_from_json_lines() {
+        let output = r#"log line
+{"workspace":{"workspaceFolder":"/workspaces/repo"},"mergedConfiguration":{}}
+"#;
+        assert_eq!(
+            workspace_folder_from_json_lines(output).as_deref(),
+            Some(Path::new("/workspaces/repo"))
+        );
+    }
+
+    #[test]
+    fn ignores_lines_without_workspace_folder() {
+        let output = "log line\n{\"workspace\":{}}\n";
+        assert_eq!(workspace_folder_from_json_lines(output), None);
+    }
+
+    #[test]
+    fn calculates_relative_execution_path() {
+        assert_eq!(
+            relative_execution_path(
+                Path::new("/repos/project"),
+                Path::new("/repos/project/src/bin")
+            )
+            .unwrap(),
+            Some(PathBuf::from("src/bin"))
+        );
+        assert_eq!(
+            relative_execution_path(Path::new("/repos/project"), Path::new("/repos/project"))
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_execution_path_outside_repository() {
+        let error = relative_execution_path(
+            Path::new("/repos/project"),
+            Path::new("/tmp/project-worktree"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "worktree /tmp/project-worktree is outside the repository /repos/project; the Dev Container cannot see it\ncreate the worktree inside the repository (for example, under .claude/worktrees/)"
+        );
+    }
+
+    #[test]
+    fn wraps_exec_argv_with_container_directory() {
+        assert_eq!(
+            wrap_exec_argv(
+                Path::new("/workspaces/repo/src"),
+                [OsString::from("cargo"), OsString::from("test")]
+            ),
+            vec![
+                "sh",
+                "-c",
+                r#"cd "$1" && shift && exec "$@""#,
+                "sh",
+                "/workspaces/repo/src",
+                "cargo",
+                "test"
+            ]
         );
     }
 

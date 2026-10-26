@@ -12,7 +12,7 @@ const INSTRUCTIONS: &str = "# Development VM\n\
 - Source files live on the host VM; edit them there.\n\
 - Project runtimes live in Dev Containers. Run project commands with `devctl exec -- <command>` from inside the repository.\n\
 - Use `devctl up` to start the environment of an existing repository; use `devctl ensure owner/repo` when it may not be cloned yet (non-interactive, idempotent).\n\
-- `devctl exec` refuses to run from a git worktree. Run it from the main repository root and `cd` inside the container, e.g. `devctl exec -- bash -lc 'cd .claude/worktrees/<name> && <command>'`. Create worktrees inside the repository (e.g. `.claude/worktrees/`) so the container can see them.\n\
+- `devctl exec` runs in the container directory matching your current directory, including worktrees inside the repository (e.g. `.claude/worktrees/<name>`). Worktrees outside the repository are not visible to the container.\n\
 - Do not install project dependencies directly on the host VM.\n\
 - Do not run `devctl open` or `devctl shell`: they are interactive and will not return.\n\
 - devctl requires a Dev Container. For a repository without one, follow that repository's own instructions instead.";
