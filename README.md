@@ -93,6 +93,10 @@ devctl exec -- cargo test        # コンテナ内で実行
 devctl shell                     # コンテナ内 bash
 ```
 
+repository指定を省略した `exec` / `shell` は、通常のサブディレクトリや
+`.claude/worktrees/` などrepository内のworktreeを含め、現在位置に対応する
+コンテナ内ディレクトリで実行される。repository外のworktreeは対象外。
+
 ## コマンド
 
 | command | 動作 |

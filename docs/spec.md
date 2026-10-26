@@ -201,13 +201,14 @@ repository指定がある場合はそのrepositoryを使用する。
 
 repository指定がない場合は、current directoryが属するGit repositoryを使用する。
 
-Git repository rootの取得には、
+Git repository本体のrootの取得には、
 
 ```bash
-git rev-parse --show-toplevel
+git rev-parse --path-format=absolute --git-common-dir
 ```
 
-を使用する。
+を使用し、返されたcommon directory（通常は `.git`）の親directoryを本体rootとする。
+そのため、本体内に作成したworktreeから実行した場合も本体repositoryとして解決する。
 
 `.git` directoryを手動探索しない。
 
@@ -370,7 +371,19 @@ project固有commandについてdevctlは解釈しない。
 
 exit statusも可能な範囲で呼び出し元へ反映する。
 
+repository指定を省略した場合、ホスト側のcurrent directoryをrepository本体rootからの
+相対pathにし、`devcontainer read-configuration` が返す `workspace.workspaceFolder` に
+連結したcontainer内directoryでcommandを実行する。これは通常のsubdirectoryと、
+repository内（例: `.claude/worktrees/`）に作成したworktreeの両方に適用する。
+
+repository本体rootで実行した場合は `read-configuration` を呼ばず、従来どおりworkspace
+folder直下で実行する。`owner/repo` を明示した場合はホスト側のcurrent directoryを無視し、
+常にworkspace folder直下で実行する。本体repositoryの外側に作成したworktreeはcontainer
+から見えないためerrorとし、repository内への作成を案内する。
+
 ## `devctl shell`
+
+`devctl exec` と同じdirectory解決規則を使い、そのdirectoryで `bash` を起動する。
 
 例:
 

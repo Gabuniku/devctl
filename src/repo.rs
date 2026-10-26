@@ -88,6 +88,25 @@ pub fn git_toplevel(cwd: &Path) -> Result<PathBuf> {
         .with_context(|| format!("failed to find git toplevel from {}", cwd.display()))
 }
 
+pub fn git_common_root(cwd: &Path) -> Result<PathBuf> {
+    let args = [
+        OsString::from("-C"),
+        cwd.as_os_str().to_owned(),
+        OsString::from("rev-parse"),
+        OsString::from("--path-format=absolute"),
+        OsString::from("--git-common-dir"),
+    ];
+    let common_dir = capture_stdout("git", &args)
+        .map(PathBuf::from)
+        .with_context(|| format!("failed to find git common directory from {}", cwd.display()))?;
+    common_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
+        anyhow::anyhow!(
+            "git common directory {} has no parent",
+            common_dir.display()
+        )
+    })
+}
+
 pub fn clone_repo(id: &RepoId, dest: &Path) -> Result<()> {
     let args = [
         OsString::from("repo"),
