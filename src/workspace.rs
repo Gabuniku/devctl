@@ -49,10 +49,18 @@ pub fn resolve_repo(ws: &Workspace, arg: Option<RepoId>, cwd: &Path) -> Result<(
     Ok((id, path))
 }
 
-fn sorted_repo_lines(repos: Vec<(String, String)>) -> Vec<String> {
+fn display_repo(repo: String, local_config: bool) -> String {
+    if local_config {
+        format!("{repo} (local config)")
+    } else {
+        repo
+    }
+}
+
+fn sorted_repo_lines(repos: Vec<(String, bool)>) -> Vec<String> {
     let mut lines = repos
         .into_iter()
-        .map(|(owner, name)| format!("{owner}/{name}"))
+        .map(|(repo, local_config)| display_repo(repo, local_config))
         .collect::<Vec<_>>();
     lines.sort();
     lines
@@ -86,6 +94,65 @@ struct ListEntry {
     path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     remote_user: Option<String>,
+    local_config: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DevcontainerConfig {
+    Repository,
+    Local(PathBuf),
+    None,
+}
+
+impl DevcontainerConfig {
+    fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Local(path) => Some(path),
+            Self::Repository | Self::None => None,
+        }
+    }
+
+    fn is_local(&self) -> bool {
+        matches!(self, Self::Local(_))
+    }
+}
+
+fn config_from_presence(
+    repository_exists: bool,
+    local_exists: bool,
+    local_path: PathBuf,
+) -> DevcontainerConfig {
+    if repository_exists {
+        DevcontainerConfig::Repository
+    } else if local_exists {
+        DevcontainerConfig::Local(local_path)
+    } else {
+        DevcontainerConfig::None
+    }
+}
+
+fn local_config_path(ws: &Workspace, id: &RepoId) -> PathBuf {
+    ws.local_config_root(&id.owner, &id.name)
+        .join(".devcontainer/devcontainer.json")
+}
+
+fn resolve_devcontainer_config(
+    ws: &Workspace,
+    id: &RepoId,
+    repo_path: &Path,
+) -> DevcontainerConfig {
+    let repository_exists = repo_path.join(".devcontainer/devcontainer.json").is_file()
+        || repo_path.join(".devcontainer.json").is_file();
+    let local_path = local_config_path(ws, id);
+    let local_exists = local_path.is_file();
+    let resolved = config_from_presence(repository_exists, local_exists, local_path.clone());
+    if repository_exists && local_exists {
+        eprintln!(
+            "warning: {id} has its own devcontainer.json; ignoring local config {}",
+            local_path.display()
+        );
+    }
+    resolved
 }
 
 fn managed_repos(ws: &Workspace) -> Result<Vec<(RepoId, PathBuf)>> {
@@ -138,13 +205,22 @@ pub fn cmd_list(include_user: bool, json: bool) -> Result<()> {
         let entries = repos
             .into_iter()
             .map(|(id, path)| {
+                let config = resolve_devcontainer_config(&ws, &id, &path);
                 let remote_user = include_user
-                    .then(|| devcontainer_remote_user(&id, &path, ws.config.container_engine))
+                    .then(|| {
+                        devcontainer_remote_user(
+                            &id,
+                            &path,
+                            ws.config.container_engine,
+                            config.path(),
+                        )
+                    })
                     .transpose()?;
                 Ok(ListEntry {
                     repo: id.to_string(),
                     path: path.display().to_string(),
                     remote_user,
+                    local_config: config.is_local(),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -156,8 +232,14 @@ pub fn cmd_list(include_user: bool, json: bool) -> Result<()> {
         let repos = repos
             .into_iter()
             .map(|(id, path)| {
-                let user = devcontainer_remote_user(&id, &path, ws.config.container_engine)?;
-                Ok((id.to_string(), user))
+                let config = resolve_devcontainer_config(&ws, &id, &path);
+                let user = devcontainer_remote_user(
+                    &id,
+                    &path,
+                    ws.config.container_engine,
+                    config.path(),
+                )?;
+                Ok((display_repo(id.to_string(), config.is_local()), user))
             })
             .collect::<Result<Vec<_>>>()?;
         sorted_repo_user_lines(repos)
@@ -165,7 +247,10 @@ pub fn cmd_list(include_user: bool, json: bool) -> Result<()> {
         sorted_repo_lines(
             repos
                 .into_iter()
-                .map(|(id, _)| (id.owner, id.name))
+                .map(|(id, path)| {
+                    let config = resolve_devcontainer_config(&ws, &id, &path);
+                    (id.to_string(), config.is_local())
+                })
                 .collect(),
         )
     };
@@ -198,14 +283,9 @@ fn devcontainer_remote_user(
     id: &RepoId,
     repo_path: &Path,
     engine: ContainerEngine,
+    config: Option<&Path>,
 ) -> Result<String> {
-    let mut args = vec![
-        OsString::from("read-configuration"),
-        OsString::from("--workspace-folder"),
-        repo_path.as_os_str().to_owned(),
-        OsString::from("--include-merged-configuration"),
-    ];
-    args.extend(docker_path_args(engine));
+    let args = devcontainer_read_configuration_args(repo_path, engine, config);
     let output = Command::new("devcontainer")
         .args(args)
         .output()
@@ -217,6 +297,22 @@ fn devcontainer_remote_user(
         .with_context(|| format!("Dev Container configuration for {id} was not UTF-8"))?;
     remote_user_from_json_lines(&stdout)
         .ok_or_else(|| anyhow::anyhow!("remote user is not configured for repository {id}"))
+}
+
+fn devcontainer_read_configuration_args(
+    repo_path: &Path,
+    engine: ContainerEngine,
+    config: Option<&Path>,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("read-configuration"),
+        OsString::from("--workspace-folder"),
+        repo_path.as_os_str().to_owned(),
+        OsString::from("--include-merged-configuration"),
+    ];
+    args.extend(devcontainer_config_args(config));
+    args.extend(docker_path_args(engine));
+    args
 }
 
 pub fn ssh_target(id: &RepoId, user: &str) -> String {
@@ -234,7 +330,8 @@ pub fn cmd_ssh_target(arg: Option<RepoId>, json: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
-    let user = devcontainer_remote_user(&id, &path, ws.config.container_engine)?;
+    let config = resolve_devcontainer_config(&ws, &id, &path);
+    let user = devcontainer_remote_user(&id, &path, ws.config.container_engine, config.path())?;
     let target = ssh_target(&id, &user);
     if json {
         let output = SshTargetOutput {
@@ -277,7 +374,9 @@ pub fn cmd_context(arg: Option<RepoId>, json: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
-    let remote_user = devcontainer_remote_user(&id, &path, ws.config.container_engine)?;
+    let config = resolve_devcontainer_config(&ws, &id, &path);
+    let remote_user =
+        devcontainer_remote_user(&id, &path, ws.config.container_engine, config.path())?;
     let output = ContextOutput {
         repo: id.to_string(),
         workspace_root: ws.root.display().to_string(),
@@ -414,12 +513,14 @@ fn devcontainer_up_args(
     home: Option<&Path>,
     options: UpOptions,
     remote_user: Option<&str>,
+    devcontainer_config: Option<&Path>,
 ) -> Result<Vec<OsString>> {
     let mut args = vec![
         OsString::from("up"),
         OsString::from("--workspace-folder"),
         repo_path.as_os_str().to_owned(),
     ];
+    args.extend(devcontainer_config_args(devcontainer_config));
     if options.remove_existing_container {
         args.push(OsString::from("--remove-existing-container"));
     }
@@ -445,18 +546,30 @@ fn docker_path_args(engine: ContainerEngine) -> Vec<OsString> {
     }
 }
 
-pub fn devcontainer_up(
+fn devcontainer_config_args(config: Option<&Path>) -> Vec<OsString> {
+    config.map_or_else(Vec::new, |path| {
+        vec![OsString::from("--config"), path.as_os_str().to_owned()]
+    })
+}
+
+fn devcontainer_up(
     id: &RepoId,
     repo_path: &Path,
     config: &Config,
     options: UpOptions,
+    devcontainer_config: &DevcontainerConfig,
 ) -> Result<()> {
     let needs_remote_user = config
         .mounts
         .iter()
         .any(|mount| mount.target.contains(REMOTE_USER_PLACEHOLDER));
     let remote_user = if needs_remote_user {
-        match devcontainer_remote_user(id, repo_path, config.container_engine) {
+        match devcontainer_remote_user(
+            id,
+            repo_path,
+            config.container_engine,
+            devcontainer_config.path(),
+        ) {
             Ok(user) => Some(user),
             Err(error) => {
                 for mount in config
@@ -484,6 +597,7 @@ pub fn devcontainer_up(
         std::env::var_os("HOME").map(PathBuf::from).as_deref(),
         options,
         remote_user.as_deref(),
+        devcontainer_config.path(),
     )?;
     let status = Command::new("devcontainer")
         .args(args)
@@ -531,9 +645,16 @@ fn prepare_repository(arg: Option<RepoId>) -> Result<RepoId> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (id, path) = resolve_or_clone(&ws, arg, &cwd)?;
+    let devcontainer_config = resolve_devcontainer_config(&ws, &id, &path);
     ensure_claude_local(&path)?;
     ensure_git_exclude(&path)?;
-    devcontainer_up(&id, &path, &ws.config, UpOptions::default())?;
+    devcontainer_up(
+        &id,
+        &path,
+        &ws.config,
+        UpOptions::default(),
+        &devcontainer_config,
+    )?;
     Ok(id)
 }
 
@@ -550,6 +671,7 @@ pub fn cmd_up(arg: Option<RepoId>, rebuild: bool) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
     let (id, path) = resolve_repo(&ws, arg, &cwd)?;
+    let devcontainer_config = resolve_devcontainer_config(&ws, &id, &path);
     ensure_claude_local(&path)?;
     ensure_git_exclude(&path)?;
     devcontainer_up(
@@ -559,14 +681,17 @@ pub fn cmd_up(arg: Option<RepoId>, rebuild: bool) -> Result<()> {
         UpOptions {
             remove_existing_container: rebuild,
         },
+        &devcontainer_config,
     )
 }
 
 pub fn cmd_shell(arg: Option<RepoId>) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
-    let (_, path) = resolve_repo(&ws, arg, &cwd)?;
-    let status = interactive_devcontainer_exec(&path, ws.config.container_engine, ["bash"])?;
+    let (id, path) = resolve_repo(&ws, arg, &cwd)?;
+    let config = resolve_devcontainer_config(&ws, &id, &path);
+    let status =
+        interactive_devcontainer_exec(&path, ws.config.container_engine, config.path(), ["bash"])?;
     if !status.success() {
         bail!("devcontainer shell exited with {status}");
     }
@@ -579,25 +704,37 @@ pub fn cmd_exec(arg: Option<RepoId>, argv: Vec<String>) -> Result<ExitStatus> {
     }
     let cwd = std::env::current_dir()?;
     let ws = load_workspace(&cwd)?;
-    let (_, path) = resolve_repo(&ws, arg, &cwd)?;
-    interactive_devcontainer_exec(&path, ws.config.container_engine, argv)
+    let (id, path) = resolve_repo(&ws, arg, &cwd)?;
+    let config = resolve_devcontainer_config(&ws, &id, &path);
+    interactive_devcontainer_exec(&path, ws.config.container_engine, config.path(), argv)
+}
+
+fn devcontainer_exec_args(
+    repo_path: &Path,
+    engine: ContainerEngine,
+    config: Option<&Path>,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("exec"),
+        OsString::from("--workspace-folder"),
+        repo_path.as_os_str().to_owned(),
+    ];
+    args.extend(devcontainer_config_args(config));
+    args.extend(docker_path_args(engine));
+    args
 }
 
 fn interactive_devcontainer_exec<I, S>(
     repo_path: &Path,
     engine: ContainerEngine,
+    config: Option<&Path>,
     argv: I,
 ) -> Result<ExitStatus>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    let mut args = vec![
-        OsString::from("exec"),
-        OsString::from("--workspace-folder"),
-        repo_path.as_os_str().to_owned(),
-    ];
-    args.extend(docker_path_args(engine));
+    let args = devcontainer_exec_args(repo_path, engine, config);
     Command::new("devcontainer")
         .args(args)
         .args(argv)
@@ -613,12 +750,185 @@ where
         })
 }
 
+fn template_reference(template: &str) -> String {
+    if template.contains('/') {
+        template.to_owned()
+    } else {
+        format!("ghcr.io/devcontainers/templates/{template}:latest")
+    }
+}
+
+pub fn cmd_local_config_init(arg: Option<RepoId>, template: &str) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let ws = load_workspace(&cwd)?;
+    let (id, repo_path) = resolve_repo(&ws, arg, &cwd)?;
+    let config_path = local_config_path(&ws, &id);
+    match resolve_devcontainer_config(&ws, &id, &repo_path) {
+        DevcontainerConfig::Repository => {
+            bail!("repository {id} has its own devcontainer.json")
+        }
+        DevcontainerConfig::Local(_) => {
+            bail!("local config already exists at {}", config_path.display())
+        }
+        DevcontainerConfig::None => {}
+    }
+
+    let config_root = ws.local_config_root(&id.owner, &id.name);
+    fs::create_dir_all(&config_root)
+        .with_context(|| format!("failed to create {}", config_root.display()))?;
+    let status = Command::new("devcontainer")
+        .args(["templates", "apply", "--workspace-folder"])
+        .arg(&config_root)
+        .args([
+            "-t",
+            &template_reference(template),
+            "--omit-paths",
+            r#"[".github/*"]"#,
+        ])
+        .status()
+        .with_context(|| format!("failed to apply Dev Container template for {id}"));
+    match status {
+        Ok(status) if status.success() && config_path.is_file() => {
+            println!("{}", config_path.display());
+            Ok(())
+        }
+        Ok(status) => {
+            let _ = fs::remove_dir_all(&config_root);
+            if status.success() {
+                bail!(
+                    "Dev Container template did not create {}",
+                    config_path.display()
+                );
+            }
+            bail!("devcontainer templates apply failed for repository {id}")
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&config_root);
+            Err(error)
+        }
+    }
+}
+
+pub fn cmd_local_config_path(arg: Option<RepoId>) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let ws = load_workspace(&cwd)?;
+    let (id, _) = resolve_repo(&ws, arg, &cwd)?;
+    let path = local_config_path(&ws, &id);
+    println!("{}", path.display());
+    if !path.is_file() {
+        eprintln!("note: not created yet");
+    }
+    Ok(())
+}
+
+pub fn cmd_local_config_rm(arg: Option<RepoId>) -> Result<()> {
+    let cwd = std::env::current_dir()?;
+    let ws = load_workspace(&cwd)?;
+    let (id, _) = resolve_repo(&ws, arg, &cwd)?;
+    let config_root = ws.local_config_root(&id.owner, &id.name);
+    if !config_root.exists() {
+        bail!("local config does not exist at {}", config_root.display());
+    }
+    fs::remove_dir_all(&config_root)
+        .with_context(|| format!("failed to remove {}", config_root.display()))?;
+    let owner_root = ws.root.join("local-configs").join(&id.owner);
+    match fs::remove_dir(&owner_root) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to remove {}", owner_root.display()))
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn config(contents: &str) -> Config {
         toml::from_str(&format!("projects_dir = \"projects\"\n{contents}")).unwrap()
+    }
+
+    #[test]
+    fn resolves_devcontainer_config_from_presence() {
+        let local =
+            PathBuf::from("/workspace/local-configs/owner/repo/.devcontainer/devcontainer.json");
+        assert_eq!(
+            config_from_presence(true, true, local.clone()),
+            DevcontainerConfig::Repository
+        );
+        assert_eq!(
+            config_from_presence(false, true, local.clone()),
+            DevcontainerConfig::Local(local.clone())
+        );
+        assert_eq!(
+            config_from_presence(false, false, local),
+            DevcontainerConfig::None
+        );
+    }
+
+    #[test]
+    fn expands_short_template_name_and_preserves_full_reference() {
+        assert_eq!(
+            template_reference("rust"),
+            "ghcr.io/devcontainers/templates/rust:latest"
+        );
+        assert_eq!(
+            template_reference("example.com/team/template:1"),
+            "example.com/team/template:1"
+        );
+    }
+
+    #[test]
+    fn adds_config_to_read_configuration_args() {
+        assert_eq!(
+            devcontainer_read_configuration_args(
+                Path::new("/repo"),
+                ContainerEngine::Docker,
+                Some(Path::new("/local/devcontainer.json")),
+            ),
+            vec![
+                "read-configuration",
+                "--workspace-folder",
+                "/repo",
+                "--include-merged-configuration",
+                "--config",
+                "/local/devcontainer.json",
+            ]
+        );
+        assert_eq!(
+            devcontainer_read_configuration_args(Path::new("/repo"), ContainerEngine::Docker, None,),
+            vec![
+                "read-configuration",
+                "--workspace-folder",
+                "/repo",
+                "--include-merged-configuration",
+            ]
+        );
+    }
+
+    #[test]
+    fn exec_args_include_config_only_when_provided() {
+        assert_eq!(
+            devcontainer_exec_args(
+                Path::new("/repo"),
+                ContainerEngine::Docker,
+                Some(Path::new("/local/devcontainer.json")),
+            ),
+            vec![
+                "exec",
+                "--workspace-folder",
+                "/repo",
+                "--config",
+                "/local/devcontainer.json",
+            ]
+        );
+        assert_eq!(
+            devcontainer_exec_args(Path::new("/repo"), ContainerEngine::Docker, None),
+            vec!["exec", "--workspace-folder", "/repo"]
+        );
     }
 
     #[test]
@@ -655,10 +965,18 @@ mod tests {
     fn sorts_repo_lines() {
         assert_eq!(
             sorted_repo_lines(vec![
-                ("yattulab".into(), "qi-bot-rs".into()),
-                ("Gabuniku".into(), "foo".into()),
+                ("yattulab/qi-bot-rs".into(), false),
+                ("Gabuniku/foo".into(), false),
             ]),
             vec!["Gabuniku/foo", "yattulab/qi-bot-rs"]
+        );
+    }
+
+    #[test]
+    fn marks_local_config_in_repo_lines() {
+        assert_eq!(
+            sorted_repo_lines(vec![("owner/repo".into(), true)]),
+            vec!["owner/repo (local config)"]
         );
     }
 
@@ -694,25 +1012,41 @@ mod tests {
     }
 
     #[test]
+    fn aligns_repo_user_lines_with_local_config_marker() {
+        assert_eq!(
+            sorted_repo_user_lines(vec![
+                ("owner/one (local config)".into(), "vscode".into()),
+                ("owner/two".into(), "node".into()),
+            ]),
+            vec![
+                "owner/one (local config)   vscode",
+                "owner/two                  node",
+            ]
+        );
+    }
+
+    #[test]
     fn serializes_list_entries_with_optional_remote_user() {
         let entries = vec![
             ListEntry {
                 repo: "owner/one".into(),
                 path: "/work/owner/one".into(),
                 remote_user: None,
+                local_config: false,
             },
             ListEntry {
                 repo: "owner/two".into(),
                 path: "/work/owner/two".into(),
                 remote_user: Some("vscode".into()),
+                local_config: true,
             },
         ];
 
         assert_eq!(
             serde_json::to_value(entries).unwrap(),
             serde_json::json!([
-                {"repo": "owner/one", "path": "/work/owner/one"},
-                {"repo": "owner/two", "path": "/work/owner/two", "remote_user": "vscode"}
+                {"repo": "owner/one", "path": "/work/owner/one", "local_config": false},
+                {"repo": "owner/two", "path": "/work/owner/two", "remote_user": "vscode", "local_config": true}
             ])
         );
     }
@@ -802,6 +1136,7 @@ mod tests {
             Some(Path::new("/home/me")),
             UpOptions::default(),
             None,
+            None,
         )
         .unwrap();
 
@@ -818,6 +1153,40 @@ mod tests {
     }
 
     #[test]
+    fn up_args_include_config_only_when_provided() {
+        let with_config = devcontainer_up_args(
+            &config(""),
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions::default(),
+            None,
+            Some(Path::new("/local/devcontainer.json")),
+        )
+        .unwrap();
+        let without_config = devcontainer_up_args(
+            &config(""),
+            Path::new("/repo"),
+            Some(Path::new("/home/me")),
+            UpOptions::default(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            with_config,
+            vec![
+                "up",
+                "--workspace-folder",
+                "/repo",
+                "--config",
+                "/local/devcontainer.json"
+            ]
+        );
+        assert_eq!(without_config, vec!["up", "--workspace-folder", "/repo"]);
+    }
+
+    #[test]
     fn adds_mounts_with_expanded_absolute_sources() {
         let config = config(
             r#"
@@ -831,6 +1200,7 @@ target = "/home/vscode/.ssh/authorized_keys"
             Path::new("/repo"),
             Some(Path::new("/home/me")),
             UpOptions::default(),
+            None,
             None,
         )
         .unwrap();
@@ -862,6 +1232,7 @@ target = "/home/{remoteUser}/.ssh/authorized_keys"
             Some(Path::new("/home/me")),
             UpOptions::default(),
             Some("vscode"),
+            None,
         )
         .unwrap();
 
@@ -896,6 +1267,7 @@ target = "/cache"
             Some(Path::new("/home/me")),
             UpOptions::default(),
             None,
+            None,
         )
         .unwrap();
 
@@ -926,6 +1298,7 @@ target = "/home/{remoteUser}/{remoteUser}"
             Some(Path::new("/home/me")),
             UpOptions::default(),
             Some("node"),
+            None,
         )
         .unwrap();
 
@@ -948,6 +1321,7 @@ target = "/home/{remoteUser}/{remoteUser}"
             Path::new("/repo"),
             Some(Path::new("/home/me")),
             UpOptions::default(),
+            None,
             None,
         )
         .unwrap();
@@ -976,6 +1350,7 @@ target = "/home/{remoteUser}/{remoteUser}"
             Some(Path::new("/home/me")),
             UpOptions::default(),
             None,
+            None,
         )
         .unwrap();
 
@@ -1001,6 +1376,7 @@ target = "/home/{remoteUser}/{remoteUser}"
                 remove_existing_container: true,
             },
             None,
+            None,
         )
         .unwrap();
 
@@ -1024,6 +1400,7 @@ target = "/home/{remoteUser}/{remoteUser}"
             UpOptions {
                 remove_existing_container: true,
             },
+            None,
             None,
         )
         .unwrap();

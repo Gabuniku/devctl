@@ -9,7 +9,7 @@ pub mod workspace;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{AgentsCommand, Cli, Commands};
+use cli::{AgentsCommand, Cli, Commands, LocalConfigCommand};
 
 fn main() -> Result<()> {
     match Cli::parse().command {
@@ -29,6 +29,13 @@ fn main() -> Result<()> {
         Commands::Context { repo, json } => workspace::cmd_context(repo, json),
         Commands::Agents { command } => match command {
             AgentsCommand::Install { print } => agents::cmd_install(print),
+        },
+        Commands::LocalConfig { command } => match command {
+            LocalConfigCommand::Init { repo, template } => {
+                workspace::cmd_local_config_init(repo, &template)
+            }
+            LocalConfigCommand::Path { repo } => workspace::cmd_local_config_path(repo),
+            LocalConfigCommand::Rm { repo } => workspace::cmd_local_config_rm(repo),
         },
     }
 }
